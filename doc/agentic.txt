@@ -332,6 +332,33 @@ headers ~
   }
 <
 
+                                          *agentic-config-cwd*
+cwd ~
+  Type: `fun(ctx): string|nil` (optional, default: `nil`)
+
+  Resolver function for the per-session working directory. The
+  resolved cwd is sent to the ACP provider in `session/new`, captured
+  once when the session is created, and reused for that session's
+  lifetime (including session restore).
+
+  The function receives a context table with fields `tab_page_id`
+  (integer) and `bufnr` (integer, the active buffer when the session
+  was created). It must return a path string (absolute or `~`-
+  prefixed) or `nil` to fall back to `vim.fn.getcwd()`.
+
+>lua
+  --- @type agentic.PartialUserConfig
+  opts = {
+    cwd = function(ctx)
+      local name = vim.api.nvim_buf_get_name(ctx.bufnr)
+      if name ~= "" then
+        return vim.fs.root(name, { ".git" })
+      end
+      return nil  -- fall back to vim.fn.getcwd()
+    end,
+  }
+<
+
 ==============================================================================
 USAGE                                                    *agentic-usage*
 

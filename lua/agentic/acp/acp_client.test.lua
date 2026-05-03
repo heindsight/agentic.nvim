@@ -218,6 +218,75 @@ describe("ACPClient", function()
         end)
     end)
 
+    describe("create_session", function()
+        it("sends session/new request with the supplied cwd", function()
+            local client = create_ready_client(LOAD_CAPS)
+
+            client:create_session(
+                "/some/abs/path",
+                NOOP_HANDLERS,
+                function() end
+            )
+
+            assert.spy(transport_send_stub).was.called(1)
+
+            local sent_data = transport_send_stub.calls[1][2]
+            local decoded = vim.json.decode(sent_data)
+            assert.equal("session/new", decoded.method)
+            assert.equal("/some/abs/path", decoded.params.cwd)
+        end)
+
+        it("callback receives SessionCreationResponse on success", function()
+            local client = create_ready_client(LOAD_CAPS)
+
+            --- @type agentic.acp.SessionCreationResponse|nil
+            local received_result
+            --- @type agentic.acp.ACPError|nil
+            local received_err
+
+            stub_send_response(client, "session/new", {
+                sessionId = "new-session-id",
+            }, nil)
+
+            client:create_session("/tmp", NOOP_HANDLERS, function(result, err)
+                received_result = result
+                received_err = err
+            end)
+
+            assert.is_not_nil(received_result)
+            assert.is_nil(received_err)
+            --- @cast received_result agentic.acp.SessionCreationResponse
+            assert.equal("new-session-id", received_result.sessionId)
+        end)
+
+        it("callback receives error on failure", function()
+            local client = create_ready_client(LOAD_CAPS)
+
+            --- @type agentic.acp.SessionCreationResponse|nil
+            local received_result
+            --- @type agentic.acp.ACPError|nil
+            local received_err
+
+            stub_send_response(
+                client,
+                "session/new",
+                nil,
+                { code = -32000, message = "create failed" }
+            )
+
+            client:create_session("/tmp", NOOP_HANDLERS, function(result, err)
+                received_result = result
+                received_err = err
+            end)
+
+            assert.is_nil(received_result)
+            assert.is_not_nil(received_err)
+            --- @cast received_err agentic.acp.ACPError
+            assert.equal(-32000, received_err.code)
+            assert.equal("create failed", received_err.message)
+        end)
+    end)
+
     describe("load_session", function()
         it("calls on_load_complete with nil err on success", function()
             local client = create_ready_client(LOAD_CAPS)

@@ -7,6 +7,7 @@
 local ACPPayloads = require("agentic.acp.acp_payloads")
 local ChatHistory = require("agentic.ui.chat_history")
 local Config = require("agentic.config")
+local CwdResolver = require("agentic.utils.cwd_resolver")
 local DiffPreview = require("agentic.ui.diff_preview")
 local DiagnosticsList = require("agentic.ui.diagnostics_list")
 local FileSystem = require("agentic.utils.file_system")
@@ -47,6 +48,7 @@ end
 --- @class agentic.SessionManager
 --- @field session_id? string
 --- @field tab_page_id integer
+--- @field cwd string Absolute working directory captured at construction
 --- @field _is_first_message boolean
 --- @field is_generating boolean
 --- @field widget agentic.ui.ChatWidget
@@ -110,9 +112,24 @@ function SessionManager:new(tab_page_id)
     local TodoList = require("agentic.ui.todo_list")
     local AgentConfigOptions = require("agentic.acp.agent_config_options")
 
+    local active_bufnr = 0
+    local ok_tab, win = pcall(vim.api.nvim_tabpage_get_win, tab_page_id)
+    if ok_tab and win then
+        local ok_buf, buf = pcall(vim.api.nvim_win_get_buf, win)
+        if ok_buf and buf then
+            active_bufnr = buf
+        end
+    end
+
+    local cwd = CwdResolver.resolve({
+        tab_page_id = tab_page_id,
+        bufnr = active_bufnr,
+    })
+
     self = setmetatable({
         session_id = nil,
         tab_page_id = tab_page_id,
+        cwd = cwd,
         _is_first_message = true,
         is_generating = false,
         _is_restoring_session = false,
@@ -169,7 +186,7 @@ function SessionManager:new(tab_page_id)
 
     self.permission_manager = PermissionManager:new(self.message_writer)
 
-    FilePicker:new(self.widget.buf_nrs.input)
+    FilePicker:new(self.widget.buf_nrs.input, self.cwd)
     SlashCommands.setup_completion(self.widget.buf_nrs.input)
 
     self.config_options = AgentConfigOptions:new(self.widget.buf_nrs, {
@@ -1014,7 +1031,7 @@ function SessionManager:new_session(opts)
 
     local handlers = self:_build_handlers()
 
-    self.agent:create_session(handlers, function(response, err)
+    self.agent:create_session(self.cwd, handlers, function(response, err)
         self.status_animation:stop()
 
         --- @type agentic.UserConfig.CreateSessionResponseData
@@ -1297,43 +1314,58 @@ function SessionManager:_get_system_info()
         today
     )
 
-    local project_root = vim.uv.cwd()
+    local project_root = self.cwd
 
-    local git_root = vim.fs.root(project_root or 0, ".git")
+    local git_root = vim.fs.root(project_root, ".git")
     if git_root then
         project_root = git_root
         res = res .. "\n- This is a Git repository."
 
-        local branch =
-            vim.fn.system("git rev-parse --abbrev-ref HEAD"):gsub("\n", "")
-        if vim.v.shell_error == 0 and branch ~= "" then
-            res = res .. string.format("\n- Current branch: %s", branch)
-        end
+        local git_opts = { cwd = self.cwd, text = true }
 
-        local changed = vim.fn.system("git status --porcelain"):gsub("\n$", "")
-        if vim.v.shell_error == 0 and changed ~= "" then
-            local files = vim.split(changed, "\n")
-            res = res .. "\n- Changed files:"
-            for _, file in ipairs(files) do
-                res = res .. "\n  - " .. file
+        local branch_result =
+            vim.system({ "git", "rev-parse", "--abbrev-ref", "HEAD" }, git_opts)
+                :wait()
+        if branch_result.code == 0 and branch_result.stdout then
+            local branch = vim.trim(branch_result.stdout)
+            if branch ~= "" then
+                res = res .. string.format("\n- Current branch: %s", branch)
             end
         end
 
-        local commits = vim.fn
-            .system("git log -3 --oneline --format='%h (%ar) %an: %s'")
-            :gsub("\n$", "")
-        if vim.v.shell_error == 0 and commits ~= "" then
-            local commit_lines = vim.split(commits, "\n")
-            res = res .. "\n- Recent commits:"
-            for _, commit in ipairs(commit_lines) do
-                res = res .. "\n  - " .. commit
+        local changed_result =
+            vim.system({ "git", "status", "--porcelain" }, git_opts):wait()
+        if changed_result.code == 0 and changed_result.stdout then
+            local changed = (changed_result.stdout):gsub("\n$", "")
+            if changed ~= "" then
+                local files = vim.split(changed, "\n")
+                res = res .. "\n- Changed files:"
+                for _, file in ipairs(files) do
+                    res = res .. "\n  - " .. file
+                end
+            end
+        end
+
+        local commits_result = vim.system({
+            "git",
+            "log",
+            "-3",
+            "--oneline",
+            "--format=%h (%ar) %an: %s",
+        }, git_opts):wait()
+        if commits_result.code == 0 and commits_result.stdout then
+            local commits = (commits_result.stdout):gsub("\n$", "")
+            if commits ~= "" then
+                local commit_lines = vim.split(commits, "\n")
+                res = res .. "\n- Recent commits:"
+                for _, commit in ipairs(commit_lines) do
+                    res = res .. "\n  - " .. commit
+                end
             end
         end
     end
 
-    if project_root then
-        res = res .. string.format("\n- Project root: %s", project_root)
-    end
+    res = res .. string.format("\n- Project root: %s", project_root)
 
     res = "<environment_info>\n" .. res .. "\n</environment_info>"
     return res
@@ -1396,9 +1428,8 @@ function SessionManager:load_acp_session(session_id, title, timestamp)
     )
 
     local handlers = self:_build_handlers()
-    local cwd = vim.fn.getcwd()
 
-    self.agent:load_session(session_id, cwd, {}, handlers, function(err)
+    self.agent:load_session(session_id, self.cwd, {}, handlers, function(err)
         -- vim.schedule to run AFTER deferred session update notifications
         -- (user_message_chunk etc. are routed via __with_subscriber → vim.schedule)
         vim.schedule(function()

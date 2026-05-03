@@ -65,7 +65,7 @@ describe("agentic: switch_provider", function()
             fake_agent.agent_info = {}
 
             -- Mock create_session method (synchronous to work with mini.test)
-            function fake_agent:create_session(_handlers, callback)
+            function fake_agent:create_session(_cwd, _handlers, callback)
                 callback({
                     sessionId = "test-session-" .. agent_name,
                     configOptions = nil,

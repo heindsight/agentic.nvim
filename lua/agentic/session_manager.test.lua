@@ -277,7 +277,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -370,7 +370,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -472,7 +472,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -563,7 +563,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -1283,7 +1283,12 @@ describe("agentic.SessionManager", function()
         --- @param response agentic.acp.SessionCreationResponse|nil
         --- @param err agentic.acp.ACPError|nil
         local function fake_create_session(session, response, err)
-            session.agent.create_session = function(_self, _handlers, callback)
+            session.agent.create_session = function(
+                _self,
+                _cwd,
+                _handlers,
+                callback
+            )
                 callback(response, err)
             end
         end
@@ -1414,7 +1419,7 @@ describe("agentic.SessionManager", function()
                     default_thought_level = "max",
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -1462,5 +1467,229 @@ describe("agentic.SessionManager", function()
                 assert.equal("function", type(call[3]))
             end
         )
+    end)
+
+    describe("cwd capture", function()
+        --- @type TestStub
+        local get_instance_stub
+        --- @type TestStub
+        local notify_stub
+        --- @type TestStub
+        local schedule_stub
+        --- @type TestStub
+        local health_check_stub
+        local Config
+
+        --- @type fun()[]
+        local schedule_queue = {}
+
+        local function flush_schedule()
+            while #schedule_queue > 0 do
+                local fn = table.remove(schedule_queue, 1)
+                fn()
+            end
+        end
+
+        --- The captured cwd passed to agent:create_session, set when
+        --- the fake's create_session is invoked.
+        --- @type string|nil
+        local captured_create_cwd
+        --- @type table[]
+        local captured_load_calls
+
+        local original_config_cwd
+
+        before_each(function()
+            local AgentInstance = require("agentic.acp.agent_instance")
+            local ACPHealth = require("agentic.acp.acp_health")
+            Config = require("agentic.config")
+
+            captured_create_cwd = nil
+            captured_load_calls = {}
+            original_config_cwd = Config.cwd
+
+            notify_stub = spy.stub(Logger, "notify")
+            schedule_queue = {}
+            schedule_stub = spy.stub(vim, "schedule")
+            schedule_stub:invokes(function(fn)
+                table.insert(schedule_queue, fn)
+            end)
+            health_check_stub = spy.stub(ACPHealth, "check_configured_provider")
+            health_check_stub:returns(true)
+            get_instance_stub = spy.stub(AgentInstance, "get_instance")
+            get_instance_stub:invokes(function(provider_name, callback)
+                --- @type agentic.acp.ACPClient
+                local fake = {}
+                fake.state = "ready"
+                fake.provider_config = {
+                    name = provider_name or "Test",
+                    initial_model = nil,
+                    default_mode = nil,
+                }
+                fake.agent_info = {}
+                fake.agent_capabilities = { loadSession = true }
+                function fake:create_session(cwd, _h, cb)
+                    captured_create_cwd = cwd
+                    cb({
+                        sessionId = "test-session",
+                        configOptions = nil,
+                        modes = nil,
+                        models = nil,
+                    })
+                end
+                function fake:load_session(
+                    session_id,
+                    cwd,
+                    mcp_servers,
+                    _handlers,
+                    on_complete
+                )
+                    table.insert(captured_load_calls, {
+                        session_id = session_id,
+                        cwd = cwd,
+                        mcp_servers = mcp_servers,
+                    })
+                    if on_complete then
+                        on_complete(nil)
+                    end
+                end
+                function fake:cancel_session() end
+                if callback then
+                    callback(fake)
+                end
+                return fake
+            end)
+            Config.provider = "TestProvider"
+        end)
+
+        after_each(function()
+            notify_stub:revert()
+            schedule_stub:revert()
+            health_check_stub:revert()
+            get_instance_stub:revert()
+            Config.cwd = original_config_cwd
+
+            local SessionRegistry = require("agentic.session_registry")
+            local tab_ids = {}
+            for tab_id, _ in pairs(SessionRegistry.sessions) do
+                table.insert(tab_ids, tab_id)
+            end
+            for _, tab_id in ipairs(tab_ids) do
+                SessionRegistry.destroy_session(tab_id)
+            end
+        end)
+
+        it("caches resolved cwd on self.cwd at construction", function()
+            Config.cwd = "/tmp"
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+
+            local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+
+            assert.equal("/tmp", session.cwd)
+        end)
+
+        it("falls back to vim.fn.getcwd() when Config.cwd is nil", function()
+            Config.cwd = nil
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+            local expected = vim.fn.getcwd()
+
+            local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+
+            assert.equal(expected, session.cwd)
+        end)
+
+        it("invokes resolver with tab_page_id and active bufnr", function()
+            --- @type agentic.CwdResolverContext|nil
+            local received_ctx = nil
+            Config.cwd = function(ctx)
+                received_ctx = ctx
+                return "/tmp"
+            end
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+            local current_bufnr = vim.api.nvim_get_current_buf()
+
+            SessionManager:new(tab_page_id)
+
+            assert.is_not_nil(received_ctx)
+            --- @cast received_ctx agentic.CwdResolverContext
+            assert.equal(tab_page_id, received_ctx.tab_page_id)
+            assert.equal(current_bufnr, received_ctx.bufnr)
+        end)
+
+        it("passes self.cwd as first arg to agent:create_session", function()
+            Config.cwd = "/tmp/sentinel-create"
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+
+            SessionManager:new(tab_page_id)
+            flush_schedule()
+
+            assert.equal("/tmp/sentinel-create", captured_create_cwd)
+        end)
+
+        it("load_acp_session calls agent:load_session with self.cwd", function()
+            Config.cwd = "/tmp/sentinel-load"
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+            local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+            flush_schedule()
+
+            session:load_acp_session("loaded-sid")
+
+            assert.equal(1, #captured_load_calls)
+            assert.equal("loaded-sid", captured_load_calls[1].session_id)
+            assert.equal("/tmp/sentinel-load", captured_load_calls[1].cwd)
+        end)
+    end)
+
+    describe("_get_system_info", function()
+        --- @type TestStub
+        local system_stub
+        --- @type TestStub
+        local fs_root_stub
+
+        before_each(function()
+            system_stub = spy.stub(vim, "system")
+            system_stub:invokes(function()
+                return {
+                    wait = function()
+                        return { code = 1, stdout = "", stderr = "" }
+                    end,
+                }
+            end)
+            fs_root_stub = spy.stub(vim.fs, "root")
+            fs_root_stub:returns("/fake/repo")
+        end)
+
+        after_each(function()
+            system_stub:revert()
+            fs_root_stub:revert()
+        end)
+
+        it("uses self.cwd for git commands", function()
+            local session = {
+                cwd = "/fake/repo",
+                _get_system_info = SessionManager._get_system_info,
+            } --[[@as agentic.SessionManager]]
+
+            session:_get_system_info()
+
+            assert.is_true(system_stub.call_count >= 1)
+            for i = 1, system_stub.call_count do
+                local call = system_stub.calls[i]
+                local opts = call[2]
+                assert.equal("/fake/repo", opts.cwd)
+            end
+        end)
+
+        it("includes Project root from self.cwd in output", function()
+            fs_root_stub:returns(nil)
+            local session = {
+                cwd = "/some/project/root",
+                _get_system_info = SessionManager._get_system_info,
+            } --[[@as agentic.SessionManager]]
+
+            local info = session:_get_system_info()
+
+            assert.truthy(info:match("Project root: /some/project/root"))
+        end)
     end)
 end)

@@ -50,7 +50,10 @@ describe("FilePicker:scan_files", function()
         original_cmd_rg = FilePicker.CMD_RG[1]
         original_cmd_fd = FilePicker.CMD_FD[1]
         original_cmd_git = FilePicker.CMD_GIT[1]
-        picker = FilePicker:new(vim.api.nvim_create_buf(false, true)) --[[@as agentic.ui.FilePicker]]
+        picker = FilePicker:new(
+            vim.api.nvim_create_buf(false, true),
+            vim.fn.getcwd()
+        ) --[[@as agentic.ui.FilePicker]]
     end)
 
     after_each(function()
@@ -63,6 +66,25 @@ describe("FilePicker:scan_files", function()
         FilePicker.CMD_GIT[1] = original_cmd_git
     end)
 
+    --- Build a `vim.system` stub-shim returning a `:wait()`-able fake
+    --- that yields the given results in sequence.
+    --- @param results { code: integer, stdout: string, stderr?: string }[]
+    local function stub_vim_system(results)
+        --- @type integer
+        local idx = 0
+        local stub = spy.stub(vim, "system")
+        stub:invokes(function()
+            idx = idx + 1
+            local res = results[idx] or { code = 1, stdout = "", stderr = "" }
+            return {
+                wait = function()
+                    return res
+                end,
+            }
+        end)
+        return stub
+    end
+
     describe("mocked commands", function()
         it("should stop at first successful command", function()
             -- Make all commands available by setting them to executables that exist
@@ -70,22 +92,63 @@ describe("FilePicker:scan_files", function()
             FilePicker.CMD_FD[1] = "echo"
             FilePicker.CMD_GIT[1] = "echo"
 
-            system_stub = spy.stub(vim.fn, "system")
-            system_stub:invokes(function(_cmd)
-                -- First call returns empty (simulates failure)
-                -- Second call returns files (simulates success)
-                if system_stub.call_count == 1 then
-                    return ""
-                else
-                    return "file1.lua\nfile2.lua\nfile3.lua\n"
-                end
-            end)
+            -- _build_scan_commands runs `git rev-parse --git-dir` first
+            -- (success enables git ls-files), so the order of vim.system calls is:
+            -- 1. git rev-parse (precheck) — make it succeed so git is added
+            -- 2. rg (first command) — empty success means it returns no files
+            -- 3. fd (second command) — returns files
+            system_stub = stub_vim_system({
+                { code = 0, stdout = "" }, -- git precheck
+                { code = 0, stdout = "" }, -- rg (empty -> falls through)
+                { code = 0, stdout = "file1.lua\nfile2.lua\nfile3.lua\n" }, -- fd
+            })
 
             local files = picker:scan_files()
 
-            -- Should have called system exactly 2 times (first fails, second succeeds)
-            assert.equal(2, system_stub.call_count)
+            -- 1 precheck + 2 scan commands = 3 calls
+            assert.equal(3, system_stub.call_count)
             assert.equal(3, #files)
+        end)
+
+        it("runs scan commands with cwd = session_cwd", function()
+            FilePicker.CMD_RG[1] = "echo"
+            FilePicker.CMD_FD[1] = "nonexistent_fd"
+            FilePicker.CMD_GIT[1] = "nonexistent_git"
+
+            local sentinel = "/tmp/sentinel-cwd"
+            picker.session_cwd = sentinel
+
+            system_stub = stub_vim_system({
+                { code = 0, stdout = "lua/foo.lua\n" }, -- rg
+            })
+
+            picker:scan_files()
+
+            assert.is_true(system_stub.call_count >= 1)
+            for i = 1, system_stub.call_count do
+                local opts = system_stub.calls[i][2]
+                assert.equal(sentinel, opts.cwd)
+            end
+        end)
+
+        it("absolutizes scan output relative to session_cwd", function()
+            FilePicker.CMD_RG[1] = "echo"
+            FilePicker.CMD_FD[1] = "nonexistent_fd"
+            FilePicker.CMD_GIT[1] = "nonexistent_git"
+
+            local sentinel = "/tmp/sentinel-abs"
+            picker.session_cwd = sentinel
+
+            system_stub = stub_vim_system({
+                { code = 0, stdout = "lua/foo.lua\n" },
+            })
+
+            local files = picker:scan_files()
+
+            assert.equal(1, #files)
+            -- to_smart_path on /tmp/sentinel-abs/lua/foo.lua (which is
+            -- outside vim CWD and home) yields the absolute path itself.
+            assert.equal("@/tmp/sentinel-abs/lua/foo.lua", files[1].word)
         end)
     end)
 
@@ -216,7 +279,7 @@ describe("FilePicker keymap fallback", function()
 
     --- Load FilePicker in child process to void polluting main test env
     local function load_file_picker()
-        child.lua([[require("agentic.ui.file_picker"):new(0)]])
+        child.lua([[require("agentic.ui.file_picker"):new(0, vim.fn.getcwd())]])
     end
 
     before_each(function()
