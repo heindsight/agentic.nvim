@@ -201,6 +201,17 @@
 --- @field on_session_update? fun(data: agentic.UserConfig.SessionUpdateData): nil
 --- @field on_file_edit? fun(data: agentic.UserConfig.FileEditData): nil
 
+--- Context passed to a `cwd` resolver function
+--- @class agentic.CwdResolverContext
+--- @field tab_page_id integer Tabpage ID owning the new session
+--- @field bufnr integer Buffer that was active in the tabpage when the session was created
+
+--- Resolver for the per-session working directory. Receives the call
+--- context and returns a path string (absolute or `~`-prefixed), or
+--- `nil` to fall back to `vim.fn.getcwd()`. Returning an empty string
+--- or throwing also falls back.
+--- @alias agentic.UserConfig.CwdResolver fun(ctx: agentic.CwdResolverContext): string|nil
+
 --- Control various behaviors and features of the plugin
 --- @class agentic.UserConfig.Settings
 --- @field move_cursor_to_chat_on_submit boolean Automatically move cursor to chat window after submitting a prompt
@@ -284,6 +295,7 @@
 --- @field hooks agentic.UserConfig.Hooks
 --- @field headers agentic.UserConfig.Headers
 --- @field settings agentic.UserConfig.Settings
+--- @field cwd? agentic.UserConfig.CwdResolver
 local ConfigDefault = {
     debug = false,
 
@@ -562,6 +574,8 @@ local ConfigDefault = {
     settings = {
         move_cursor_to_chat_on_submit = true,
     },
+
+    cwd = nil,
 }
 
 return ConfigDefault

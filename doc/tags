@@ -2,6 +2,7 @@ agentic-auto-scroll	agentic.txt	/*agentic-auto-scroll*
 agentic-blink-cmp	agentic.txt	/*agentic-blink-cmp*
 agentic-chat-icons	agentic.txt	/*agentic-chat-icons*
 agentic-config-acp-providers	agentic.txt	/*agentic-config-acp-providers*
+agentic-config-cwd	agentic.txt	/*agentic-config-cwd*
 agentic-config-diff-preview	agentic.txt	/*agentic-config-diff-preview*
 agentic-config-headers	agentic.txt	/*agentic-config-headers*
 agentic-config-hooks	agentic.txt	/*agentic-config-hooks*

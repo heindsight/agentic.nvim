@@ -15,7 +15,7 @@ describe("SessionRestore", function()
 
     local NO_DEFAULT = {}
 
-    --- @param opts {session_id?: string|table, chat_history?: table, list_sessions?: TestSpy}|nil
+    --- @param opts {session_id?: string|table, chat_history?: table, list_sessions?: TestSpy, cwd?: string}|nil
     local function create_mock_session(opts)
         opts = opts or {}
         local sid = opts.session_id
@@ -26,6 +26,7 @@ describe("SessionRestore", function()
         end
         return {
             session_id = sid,
+            cwd = opts.cwd or "/test/cwd",
             chat_history = opts.chat_history or { messages = {} },
             agent = {
                 cancel_session = spy.new(function() end),
@@ -229,6 +230,9 @@ describe("SessionRestore", function()
             SessionRestore.show_picker(session --[[@as agentic.SessionManager]])
 
             assert.spy(session.agent.list_sessions).was.called(1)
+            -- list_sessions is called with (self, cwd, callback);
+            -- arg[2] is the cwd — must be the session's cwd, not getcwd()
+            assert.equal("/test/cwd", session.agent.list_sessions.calls[1][2])
             assert.spy(vim_ui_select_stub).was.called(1)
 
             local items = vim_ui_select_stub.calls[1][1]
