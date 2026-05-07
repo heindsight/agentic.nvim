@@ -97,7 +97,8 @@ or in the linked ADR — failures are not inlined here to avoid duplication.
   tabpage.
 - Panel + fold window options (`WidgetLayout.PANEL_WINDOW_OPTS`,
   `Fold.setup_window`) MUST be written via `vim.wo[winid][0]`. See the
-  general `:set`-style ban in root `AGENTS.md` "Common traps".
+  general `:set`-style ban in root `AGENTS.md` "Common traps". Regression:
+  `buffer_guard.test.lua::"does not leak widget window options to the editor window after redirect"`.
 - Module-level state is forbidden for per-tab data. Namespace IDs are exempt —
   IDs are global, isolation comes from per-buffer `nvim_buf_clear_namespace`.
 
@@ -218,3 +219,5 @@ change.
   `message_writer.test.lua::_check_auto_scroll`.
 - Thinking-state cleared on non-thought writes —
   `message_writer.test.lua::thinking block highlighting::"clears thinking state on reset_sender_tracking, write_tool_call_block, and write_message"`.
+- Widget window options do not leak to redirected buffers —
+  `buffer_guard.test.lua::"does not leak widget window options to the editor window after redirect"`.
