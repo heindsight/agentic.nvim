@@ -1,18 +1,14 @@
 # UI / chat buffer
 
-Contracts and traps for `chat_widget`, `widget_layout`, `message_writer`,
-`tool_call_fold`, `buffer_guard`, `permission_manager`.
+Hard rules and traps. Read code before changing behavior.
 
 ## Anti-staleness rules for this doc
 
 - Cite module + symbol, never line numbers.
-- Code blocks are for diagrams, signatures, and pattern sketches only.
-  Never paste implementation; that drifts and goes stale. Topology
-  trees, columnar layouts, and decision trees are fine at any length
-  as long as they describe shape, not behavior.
-- Every "why" must reference an observable failure (flicker, crash,
-  lost fold). If the failure is gone, delete the rule.
-- New rule = new test. Reference the test by name.
+- Code blocks describe shape (topology, layouts, decision trees), never
+  implementation.
+- Every "why" must reference an observable failure (flicker, crash, lost fold).
+  If the failure is gone, delete the rule.
 
 ## Topology
 
@@ -20,148 +16,81 @@ Contracts and traps for `chat_widget`, `widget_layout`, `message_writer`,
 SessionManager (per tab)
 └── ChatWidget (per tab)  owns buffers + windows + autocmds
     ├── WidgetLayout      open/close/resize panels, applies PANEL_WINDOW_OPTS
-    ├── HiddenChatFloat   hidden float holding chat buffer while widget hidden
+    ├── _hidden_chat_winid  float keeping chat buffer attached while widget
+    │                       hidden — managed by ChatWidget._hidden_chat_winid
+    │                       + WidgetLayout.open_hidden_chat_window — ADR 001
     ├── BufferGuard       redirects foreign buffers out of widget windows
     ├── WindowDecoration  winbar + buf names, headers in vim.t[tab]
     ├── DiffPreview       inline/split diff in real file buf (not chat)
     └── MessageWriter (per chat bufnr) ── owns chat-buffer content
         ├── tool_call_blocks    id -> ToolCallBlock (extmark-tracked range)
-        ├── ToolCallFold        manual folds, anchor pads
+        ├── ToolCallFold        manual folds, anchor pads — ADR 001
         ├── ToolCallDiff        diff extraction + minimization
         ├── DiffHighlighter     line/word hl on chat buffer
-        ├── ToolBlockBorder     ╭ │ ╰ fence glyphs via chat statuscolumn
+        │                       (lives in agentic.utils, not ui)
+        ├── ToolBlockBorder     ╭ │ ╰ fence glyphs via statuscolumn — ADR 002
         └── PermissionManager   queues + reanchors permission prompts
 ```
 
-## Ownership map
+## Lifecycle
 
-| Subject                   | Owner             | Storage                                  |
-| ------------------------- | ----------------- | ---------------------------------------- |
-| Per-tab widget instance   | SessionManager    | `SessionRegistry[tab]`                   |
-| Window-to-buffer binding  | WidgetLayout      | `vim.w[winid].agentic_bufnr`             |
-| Header parts + suffix     | WindowDecoration  | `vim.t[tab].agentic_headers`             |
-| Active diff preview bufnr | DiffPreview       | `vim.t[tab]._agentic_diff_preview_bufnr` |
-| Tool-call block range     | MessageWriter     | extmark in `NS_TOOL_BLOCKS` keyed by id  |
-| Permission queue + anchor | PermissionManager | instance fields                          |
-| Hidden chat fold-state holder | ChatWidget    | `ChatWidget._hidden_chat_winid`          |
+Widget windows are disposable.
 
-## Lifecycle contracts
+- `hide` closes and destroys every widget window.
+- Buffers persist.
+- `show` creates fresh windows on every call and reapplies every window-local
+  option. There is no "resume" path.
+- Before closing widget windows, `hide` ensures a non-widget fallback window
+  exists in the same tabpage. If `find_first_non_widget_window` returns nil, it
+  calls `open_editor_window` to create one. Skipping this fires E444 (cannot
+  close last window). See `ChatWidget:hide`.
+- Programmatic window closes (`hide`, layout rotation) MUST wrap the close call
+  in `ChatWidget:_avoid_auto_close_cmd`. The wrapper sets `self._closing = true`
+  so the global `WinClosed` autocmd's auto-close-on-user-close branch skips the
+  call. Skipping the wrapper triggers recursive close via the autocmd.
+- `destroy` only calls `hide` when the tabpage is still in
+  `nvim_list_tabpages()`. During `TabClosed`, the id is removed from that list
+  but `nvim_tabpage_is_valid` still returns true and Neovim has already torn the
+  windows down — calling `nvim_win_close` then segfaults on 0.11.x. After the
+  conditional `hide`, the buffers are deleted. See `ChatWidget:destroy` for the
+  `tab_closing` check.
+- A hidden chat floating window keeps the chat buffer attached while the widget
+  is hidden, so manual folds can be applied while closed. See ADR 001.
 
-### Open (`ChatWidget:show` -> `WidgetLayout.open`)
+## Hard rules
 
-- Bails on invalid `tab_page_id`. Position falls back to `"right"`.
-- `Fold.setup_window(chat_win, chat_buf)` MUST run after every chat-window
-  open. User's global fold options must never leak in.
-- Each panel window: `vim.w[winid].agentic_bufnr` set at creation.
-  `BufferGuard` depends on this.
-- Empty `code/files/diagnostics/todos` panels self-close in
-  `open_or_resize_dynamic_window`.
-
-### Hidden chat float (`ChatWidget._hidden_chat_winid`)
-
-- `_initialize` opens it via `WidgetLayout.open_hidden_chat_window`
-  once the chat buffer exists. Folds streamed in before the user
-  opens the widget the first time work because of this.
-- `show` closes it before `WidgetLayout.open`. Two windows on the
-  chat buffer concurrently break per-buffer fold-state inheritance.
-- `hide` closes any existing float before reopening, then reopens
-  after `WidgetLayout.close`. Skipping the close-first step leaks
-  the previous winid. Folds created while hidden land here and
-  survive to the next `show`.
-- `destroy` closes it after `hide` (when applicable) so buffer
-  deletion never races a still-attached float.
-- `open_hidden_chat_window` returns `integer|nil`. On failure the
-  widget still works, just without fold state preservation across
-  hide/show. Callers must handle nil.
-- Test invariants: `hidden chat window lifecycle` group in
-  `chat_widget.test.lua`, including
-  `does not leak a hidden float across hide() calls`.
-
-### Close (`ChatWidget:hide` -> `WidgetLayout.close`)
-
-- Programmatic closes wrap in `_avoid_auto_close_cmd` so the `WinClosed`
-  autocmd skips them via the `_closing` flag.
-- User closing any core window closes the whole widget. `todos` is the
-  only panel that can close independently.
-- Before closing, `hide` ensures a non-widget fallback window exists on
-  the current tab; creates one via `open_editor_window` if needed.
-  Otherwise the last-window error fires.
-- `WidgetLayout.close` checks `nvim_tabpage_is_valid(win_tab)` per window:
-  on Neovim 0.11.5 Linux, post-tabclose handles can return valid from
-  `nvim_win_is_valid` but segfault on close.
-
-### Destroy (`ChatWidget:destroy`)
-
-- Order: detach `BufferGuard` -> delete `WinClosed` augroup -> hide
-  (skipped if tab is closing) -> delete buffers.
-- Tab-closing detection: tab missing from `nvim_list_tabpages()` while
-  `nvim_tabpage_is_valid` still returns true. Calling `nvim_win_close`
-  during this window crashes 0.11.x.
-
-### Window settings reapplied on every open
-
-- `PANEL_WINDOW_OPTS` (`widget_layout.lua`) replaces `style = "minimal"`
-  on every `nvim_open_win`. See "The minimal-style trap" below.
-- `Fold.setup_window` is idempotent: reasserts `foldmethod`, `foldlevel`,
-  `foldenable`, `foldtext` on every chat-window open.
-
-## Ground rules
+Each rule's observable failure is documented in the matching Traps bullet below
+or in the linked ADR — failures are not inlined here to avoid duplication.
 
 - `wrap` stays on. Never propose disabling it.
 - Cursor positioning is `G0zb`, not `G$zb`. Column moves disrupt cursor
   animations; column 0 is the anchor.
-- Cursor sits on the trailing `""` line below the last block, never
-  inside a block.
-- `scrolloff = 4` on chat keeps room for spinner virt_lines above cursor.
-- Module-level state forbidden for per-tab data. Namespaces are exempt:
-  IDs are global, isolation comes from per-buffer
-  `nvim_buf_clear_namespace`.
+- Cursor sits on the trailing `""` line below the last block, never inside a
+  tool call block.
+- `scrolloff = 4` on chat keeps room for spinner virt_lines above the cursor.
+- Auto-scroll: call `MessageWriter:_capture_scroll(bufnr)` before mutation and
+  `MessageWriter:_apply_scroll(bufnr)` after, same tick. No `vim.schedule`
+  between the two — separate ticks let a redraw run with stale topline and
+  flicker.
+  - `_apply_scroll` skips the `G0zb` reapply when the user's cursor is farther
+    than `Config.auto_scroll.threshold` lines from the bottom. This is
+    intentional sticky-reading behavior, not a bug — the user stopped following
+    the stream and we preserve their position.
+- Tool-call body updates replace only the body between stable anchor pads; the
+  whole block range is never replaced.
+- Manual folds only. Never `foldexpr`. Before proposing a `foldexpr` workaround
+  (self-assign cache invalidation, `BufEnter` reapply, etc.), read the
+  rejected-alternatives table in ADR 001 — every obvious workaround has been
+  tried and documented.
+- Permission prompts reanchor after every chat mutation and reuse the existing
+  trailing `""` as separator.
+- Foreign buffers in widget windows are redirected via `BufferGuard`
+  (`lua/agentic/ui/buffer_guard.lua`) to a non-widget window in the same
+  tabpage.
+- Module-level state is forbidden for per-tab data. Namespace IDs are exempt —
+  IDs are global, isolation comes from per-buffer `nvim_buf_clear_namespace`.
 
-## Auto-scroll: capture / apply, same tick
-
-Used by every mutating write in `MessageWriter` (`write_message`,
-`write_message_chunk`, `write_tool_call_block`, `update_tool_call_block`,
-`display_permission_buttons`):
-
-```text
-self:_capture_scroll(self.bufnr)   -- BEFORE mutation
-... vim.api.nvim_buf_set_lines ...
-self:_apply_scroll(self.bufnr)     -- AFTER mutation, SAME tick
-```
-
-- `_apply_scroll` runs `:noautocmd normal! G0zb` via `nvim_win_call`.
-- **No `vim.schedule` between mutation and `zb`.** A separate tick allows
-  a redraw with a different topline -> flicker.
-- `_capture_scroll` records sticky `_should_auto_scroll` based on cursor
-  distance from bottom (`Config.auto_scroll.threshold`). Past threshold
-  = no scroll, preserves reading position.
-- `_with_modifiable_and_notify_change` fires `_on_content_changed`
-  (used by PermissionManager to reanchor).
-
-## Message writing flow
-
-Sender header rules in `MessageWriter:_maybe_write_sender_header`.
-Sender resolves from `update.sessionUpdate`:
-
-```text
-user_message_chunk     ───▶ user
-agent_message_chunk    ─┐
-agent_thought_chunk    ─┼─▶ agent
-tool_call              ─┘
-plan                   ───▶ (no header)
-```
-
-- Header written only when `sender != _last_sender`.
-- `write_structural_message` writes without flipping sender (welcome
-  banner). `write_restoring_message` suppresses timestamp.
-  `replay_history_messages` swaps `_provider_name` per message so
-  archived agent headers show the correct provider.
-- Thinking block (`agent_thought_chunk`): first chunk prepends
-  `Config.message_icons.thinking`; extmark over `[start, end]` in
-  `NS_THINKING` reused on every subsequent chunk; any non-thought write
-  calls `_clear_thinking_state`.
-
-## Tool-call block layout (every block, no conditional)
+## Tool-call block layout
 
 ```text
 row 0    header           rewritten on every update, NOT folded
@@ -171,134 +100,110 @@ row N-1  "" bottom_pad    fold end anchor
 row N    "" trailing      footer, status virt_text
 ```
 
-- Pads are unconditional. `update_tool_call_block` slices body at fixed
-  offsets: `new_lines[3 .. #lines-2]` -> rows `start+2 .. end-1`.
-- Manual folds extend on inserts inside their range but break when the
-  whole range is replaced. Stable first/last lines let the fold survive
-  streaming.
-- Header rewritten unconditionally because providers send placeholder
-  titles (`Terminal`, `Edit file`) before the real one.
+Pads are unconditional. Header is rewritten unconditionally because providers
+send placeholder titles before the real one.
 
-### Update decision tree (`update_tool_call_block`)
+## Sender classification
+
+`MessageWriter:_maybe_write_sender_header` resolves the sender from
+`update.sessionUpdate`. New `sessionUpdate` types must be classified here;
+unmapped types get no header and break message attribution.
 
 ```text
-tracker missing       ─▶ debug-log, return
-already_has_diff      ─▶ refresh header + status only
-otherwise             ─▶ rewrite body between anchors,
-                         re-apply highlights + range anchor,
-                         create fold if interior crosses threshold
+user_message_chunk     ───▶ user
+agent_message_chunk    ─┐
+agent_thought_chunk    ─┼─▶ agent
+tool_call              ─┘
+plan                   ───▶ (no header)
 ```
 
-### Namespaces
+Special write paths bypass `_maybe_write_sender_header`'s normal flow:
+`write_structural_message`, `write_restoring_message`,
+`replay_history_messages`. Read those methods before adding a new
+`sessionUpdate` type — picking the wrong path breaks message attribution.
 
-Declared at top of `message_writer.lua`. Names are self-describing.
-Range-clear endpoints are inclusive (`end_row + 1`).
-
-## Folding (manual, never expr)
-
-- `foldmethod = manual`. Foldexpr fails for live mid-stream transitions:
-  cache is lazy, `zb` lands on wrong topline before recompute, ~10 ms
-  later `WinScrolled` jumps the viewport -> flicker.
-- Folds survive widget hide/show because Neovim snapshots fold state
-  per (window, buffer) on close and replays it on the next window
-  that displays the buffer (`fold.txt:647-652`). Two concurrent
-  windows on the same buffer race the snapshot — only one wins. The
-  hidden chat float exists to keep exactly one window on the chat
-  buffer at all times (visible chat window OR hidden float, never
-  both, never neither).
-- The only synchronous foldexpr recompute is `zX`, O(N buffer lines),
-  resets manual fold state (closes folds the user opened with `zo`).
-- `Fold.close_range` runs once per block when interior crosses
-  threshold. Body replacements between anchors keep the fold intact.
-- `Fold.setup_window` guards `foldmethod` and `foldlevel` with equality
-  checks: assigning a window option triggers Vim's set-handler even on
-  no-op. `foldlevel = 0` would re-close `zo`-opened folds; `foldmethod`
-  re-assignment could delete folds if a prior flip put it on a non-manual
-  value (`:help fold-manual`). `foldenable` and `foldtext` have no such
-  side effect.
-
-### What does NOT force foldexpr eval
-
-| Attempt                                  | Why it does NOT work                  |
-| ---------------------------------------- | ------------------------------------- |
-| `vim.fn.foldlevel(L)`                    | Passive cache read. Does not eval.    |
-| `vim.fn.foldclosed(L)`                   | Same. Passive read.                   |
-| `vim.wo.foldexpr = vim.wo.foldexpr`      | Invalidates cached lines only.        |
-| `:[start],[end] foldclose`               | No-op if foldexpr has not run yet.    |
-| `zn` then `zN`                           | Toggles `foldenable`. No recompute.   |
-| `:redraw`                                | White flashes from full-UI re-render. |
-| `winrestview({topline=...})` before `zb` | `zb` recomputes from cursor anyway.   |
-
-## Permission prompt + reanchor
-
-See `PermissionManager:_process_next` and `_reanchor_permission_prompt`.
-
-- After display, registers `set_on_content_changed(reanchor_fn)`. Any
-  chat mutation firing `_notify_content_changed` triggers reanchor.
-- Reanchor: remove old buttons, append new ones.
-  `display_permission_buttons` reuses the trailing `""` left by
-  `remove_permission_buttons` as separator (detected by reading the
-  last buffer line). Adding a second blank line creates double spacing.
-- `_reanchoring` flag guards against recursive callback during the
-  reanchor's own writes.
-- Extmark IDs do NOT survive reanchor. Re-resolved every time.
-
-## BufferGuard
-
-- Keyed by `vim.w[winid].agentic_bufnr` set at window creation.
-- Foreign buffer in widget window: moved out via `find_target_window`
-  (returns first non-widget window or creates one).
-- Cursor follow-through is `vim.schedule`-d because Neovim resets
-  `current_win` after `BufEnter`.
-- A widget buffer that gets a real file loaded (named buffer with
-  `buftype != "nofile"`) is treated as repurposed: fresh scratch buffer
-  replaces it; the now-named buffer is redirected out.
+- Thinking blocks (`agent_thought_chunk`) reuse one extmark in `NS_THINKING`
+  across chunks. Any non-thought write must call
+  `MessageWriter:_clear_thinking_state` first; otherwise the next thought
+  extends the wrong extmark. Read `write_message_chunk` for the reuse pattern.
 
 ## Traps
 
 - `style = "minimal"` on panel windows
-  - Stores empty fold map in buffer's last-window memory; wipes manual
-    folds across reopens.
+  - Stores empty fold map in the buffer's last-window memory; wipes manual folds
+    across reopens.
 - Setting `foldmethod` / `foldlevel` unconditionally
-  - Set-handler triggers even on no-op assigns; closes user's
-    `zo`-opened folds.
+  - Only `Fold.setup_window` (in `lua/agentic/ui/tool_call_fold.lua`) is allowed
+    to write these. The set-handler triggers even on no-op assigns, closing the
+    user's `zo`-opened folds. See ADR 001.
 - `vim.schedule` between mutation and `G0zb`
   - Separate tick lets a redraw run with stale topline -> flicker.
-- Replacing whole tool-call range with `set_lines`
+- Replacing the whole tool-call range with `set_lines`
   - Manual fold dies. Always slice body between anchors.
 - Querying windows globally for tab-scoped lookups
   - Hits other tabs' chat windows. Use
     `nvim_tabpage_list_wins(self.tab_page_id)`.
 - Calling `nvim_win_close` after tabclose
-  - Handle returns valid from `nvim_win_is_valid` but segfaults on
-    0.11.5. Check `tabpage_is_valid` first.
-- Adding a blank line before reanchored prompt
-  - Trailing `""` is reused as separator; double blanks if not detected.
+  - Handle returns valid from `nvim_win_is_valid` but segfaults on 0.11.5. In
+    `WidgetLayout.close`, check
+    `nvim_tabpage_is_valid(nvim_win_get_tabpage(winid))` per window before
+    `nvim_win_close` — not just once at the start of the loop.
+- Adding a blank line before a reanchored prompt
+  - The reanchor leaves a trailing `""`; the next display reuses it.
+    `MessageWriter:display_permission_buttons` owns the detection — skip the
+    check there and reanchor cycles produce double blanks.
 - `vim.notify` directly
   - Fast-context errors. Use `Logger.notify`.
 - Module-level mutable state for per-tab data
   - Cross-tab leakage. See root `AGENTS.md`.
 - Two windows holding the chat buffer concurrently
-  - Breaks the per-buffer manual-fold snapshot pipeline. Always
-    close the hidden chat float before opening the visible chat
-    window, and only reopen the float after the visible chat window
-    is closed.
+  - Breaks fold-state preservation. ADR 001.
 - Reopening the hidden chat float without closing the previous one
-  - Overwrites `_hidden_chat_winid` and leaks the prior window.
-    `hide` must call `_close_hidden_chat_window` before assigning a
-    new winid. Test: `does not leak a hidden float across hide()
-    calls`.
+  - Overwrites the stored winid and leaks the prior window.
+- Re-rendering tool-call body after a diff is set
+  - Once `tracker.diff` exists, only header + status refresh. Replacing body
+    breaks preview consistency.
+- `:edit` on a widget buffer
+  - Buffer keeps its ID but gains a name and `buftype != "nofile"`.
+    `BufferGuard` detects this on `BufWinEnter` and swaps a fresh scratch buffer
+    into the widget window, redirecting the named buffer out. Re-grep
+    `BufferGuard` for the exact entry point before refactoring.
+- Mutating nested fields of `vim.t[tab].agentic_headers` in place
+  - `vim.t` returns copies; nested edits do not persist. Read via
+    `WindowDecoration.get_headers_state`, mutate, write back via
+    `set_headers_state`.
+- Mutating chat content without
+  `_with_modifiable_and_notify_permission_reanchor`
+  - Skips `_notify_permission_reanchor`; permission prompts stop reanchoring.
+  - For non-chat buffers (input, diagnostics, etc.) `BufHelpers.with_modifiable`
+    is correct — those buffers have no permission-reanchor contract. Use the
+    wrapper only when mutating `self.bufnr` (the chat buffer).
+  - Exception: `display_permission_buttons` / `remove_permission_buttons` are
+    the reanchor write path itself and use `BufHelpers.with_modifiable` directly
+    under the `PermissionManager._reanchoring` guard.
+  - `PermissionManager._reanchoring` is the recursion guard for the reanchor
+    write path itself: it is set true around `_reanchor_permission_prompt`'s own
+    `set_lines` so the post-mutation callback no-ops instead of re-entering.
+    Removing the flag re-enters and stack-overflows.
 
 ## Test invariants
 
-Each must fail without its fix. Test files are authoritative.
+Each invariant has an existing regression test. Deleting one is a behavior
+change.
 
-- Fold creation / survival: `foldclosed` line-number assertions in
-  `Fold integration` (also after `update_tool_call_block`).
-- Anchor-pad layout: body slice `[3, #lines-2]` covers all body content.
-- Permission reanchor separator: line count unchanged when last line
-  was already `""`.
-- Sender header dedup: two consecutive `agent_message_chunk` -> one
-  `### Agent`.
-- Auto-scroll threshold: cursor far from bottom, `topline` unchanged
-  after a write.
+- Fold survives window close + reopen —
+  `tool_call_fold.test.lua::setup_window::"preserves fold ranges across window close + reopen"`.
+- Fold creation gated by screen-row count > threshold —
+  `tool_call_fold.test.lua::should_fold::"folds when screen-row count exceeds threshold"`.
+- Fold counts wrapped rows, not buffer lines (one mega-line still folds) —
+  `tool_call_fold.test.lua::should_fold::"folds a single buffer line that wraps past the threshold"`.
+- Permission reanchor preserves keymaps + button position —
+  `permission_manager.test.lua::reanchor permission prompt::"moves buttons to buffer bottom and preserves keymaps"`.
+- Permission reanchor does not double-blank across cycles —
+  `permission_manager.test.lua::empty line accumulation during reanchor`.
+- Sender header dedup on consecutive same-sender writes —
+  `message_writer.test.lua::sender header tracking`.
+- Auto-scroll threshold preserves user reading position —
+  `message_writer.test.lua::_check_auto_scroll`.
+- Thinking-state cleared on non-thought writes —
+  `message_writer.test.lua::thinking block highlighting::"clears thinking state on reset_sender_tracking, write_tool_call_block, and write_message"`.
