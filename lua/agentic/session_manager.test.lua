@@ -1669,7 +1669,9 @@ describe("agentic.SessionManager", function()
         end)
 
         it("caches resolved cwd on self.cwd at construction", function()
-            Config.cwd = "/tmp"
+            Config.cwd = function()
+                return "/tmp"
+            end
             local tab_page_id = vim.api.nvim_get_current_tabpage()
 
             local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
@@ -1706,7 +1708,9 @@ describe("agentic.SessionManager", function()
         end)
 
         it("passes self.cwd as first arg to agent:create_session", function()
-            Config.cwd = "/tmp/sentinel-create"
+            Config.cwd = function()
+                return "/tmp/sentinel-create"
+            end
             local tab_page_id = vim.api.nvim_get_current_tabpage()
 
             SessionManager:new(tab_page_id)
@@ -1716,7 +1720,9 @@ describe("agentic.SessionManager", function()
         end)
 
         it("load_acp_session calls agent:load_session with self.cwd", function()
-            Config.cwd = "/tmp/sentinel-load"
+            Config.cwd = function()
+                return "/tmp/sentinel-load"
+            end
             local tab_page_id = vim.api.nvim_get_current_tabpage()
             local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
             flush_schedule()
