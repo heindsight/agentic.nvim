@@ -131,7 +131,7 @@ describe("FilePicker:scan_files", function()
             end
         end)
 
-        it("absolutizes scan output relative to session_cwd", function()
+        it("renders scan output relative to session_cwd", function()
             FilePicker.CMD_RG[1] = "echo"
             FilePicker.CMD_FD[1] = "nonexistent_fd"
             FilePicker.CMD_GIT[1] = "nonexistent_git"
@@ -146,10 +146,55 @@ describe("FilePicker:scan_files", function()
             local files = picker:scan_files()
 
             assert.equal(1, #files)
-            -- to_smart_path on /tmp/sentinel-abs/lua/foo.lua (which is
-            -- outside vim CWD and home) yields the absolute path itself.
-            assert.equal("@/tmp/sentinel-abs/lua/foo.lua", files[1].word)
+            -- Display path is anchored to session_cwd so picker output
+            -- is consistent regardless of where vim has been :cd'd.
+            assert.equal("@lua/foo.lua", files[1].word)
         end)
+
+        it(
+            "renders scan output relative to session_cwd when vim CWD is a descendant",
+            function()
+                FilePicker.CMD_RG[1] = "echo"
+                FilePicker.CMD_FD[1] = "nonexistent_fd"
+                FilePicker.CMD_GIT[1] = "nonexistent_git"
+
+                -- Use real directories so chdir succeeds. The project root
+                -- is session_cwd; vim is cd'd into a real subdirectory.
+                local project_root = vim.fn.getcwd()
+                local descendant = project_root .. "/lua/agentic/ui"
+                picker.session_cwd = project_root
+
+                system_stub = stub_vim_system({
+                    {
+                        code = 0,
+                        stdout = "doc/agentic.txt\nlua/agentic/ui/file_picker.lua\n",
+                    },
+                })
+
+                local original_cwd = vim.fn.getcwd()
+                local ok, err = pcall(function()
+                    vim.fn.chdir(descendant)
+                    local files = picker:scan_files()
+
+                    assert.equal(2, #files)
+                    -- Without the fix, files outside vim CWD render via
+                    -- :~ (e.g. "~/code/agentic.nvim/doc/agentic.txt") and
+                    -- files inside it collapse to bare basenames
+                    -- (e.g. "file_picker.lua"). After the fix, both anchor
+                    -- to session_cwd and round-trip cleanly when sent to
+                    -- the agent (whose cwd is session_cwd).
+                    assert.equal("@doc/agentic.txt", files[1].word)
+                    assert.equal(
+                        "@lua/agentic/ui/file_picker.lua",
+                        files[2].word
+                    )
+                end)
+                vim.fn.chdir(original_cwd)
+                if not ok then
+                    error(err)
+                end
+            end
+        )
     end)
 
     describe("real commands", function()

@@ -179,6 +179,24 @@ function FileSystem.to_smart_path(path)
     return vim.fn.fnamemodify(path, ":p:~:.")
 end
 
+--- Convert a path to a display-friendly form anchored to `base`:
+--- - relative to `base` if the path is inside it
+--- - else uses ~ for home directory
+--- - else absolute
+--- Use this for paths that are meaningful relative to a specific directory
+--- (e.g. an ACP session's working directory) rather than vim's current CWD.
+--- @param path string
+--- @param base string Absolute base directory to anchor against
+--- @return string smart_path
+function FileSystem.to_smart_path_from(path, base)
+    local abs = vim.fn.fnamemodify(path, ":p")
+    local prefix = base:gsub("/+$", "") .. "/"
+    if abs:sub(1, #prefix) == prefix then
+        return abs:sub(#prefix + 1)
+    end
+    return vim.fn.fnamemodify(abs, ":~")
+end
+
 --- @param file_path string
 --- @return string
 function FileSystem.get_file_extension(file_path)

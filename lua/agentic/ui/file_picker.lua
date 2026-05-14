@@ -152,10 +152,14 @@ function FilePicker:scan_files()
             local files = {}
             for line in output:gmatch("[^\n]+") do
                 if line ~= "" then
-                    -- Scan output is relative to session_cwd; absolutize so
-                    -- to_smart_path doesn't re-resolve against vim's CWD.
+                    -- Scan output is relative to session_cwd; render the
+                    -- display path anchored to session_cwd so it stays
+                    -- consistent regardless of vim's CWD.
                     local abs_path = self.session_cwd .. "/" .. line
-                    local display_path = FileSystem.to_smart_path(abs_path)
+                    local display_path = FileSystem.to_smart_path_from(
+                        abs_path,
+                        self.session_cwd
+                    )
                     table.insert(files, {
                         word = "@" .. display_path,
                         menu = "File",
@@ -190,7 +194,8 @@ function FilePicker:scan_files()
 
     for _, path in ipairs(glob_files) do
         if vim.fn.isdirectory(path) == 0 and not self:_should_exclude(path) then
-            local display_path = FileSystem.to_smart_path(path)
+            local display_path =
+                FileSystem.to_smart_path_from(path, self.session_cwd)
             if not seen[display_path] then
                 seen[display_path] = true
                 table.insert(files, {
