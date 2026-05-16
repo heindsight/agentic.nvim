@@ -48,7 +48,7 @@ end
 --- @class agentic.SessionManager
 --- @field session_id? string
 --- @field tab_page_id integer
---- @field cwd string Absolute working directory captured at construction
+--- @field cwd string Absolute working directory resolved once at SessionManager construction time; reused for the lifetime of this instance
 --- @field _is_first_message boolean
 --- @field is_generating boolean
 --- @field widget agentic.ui.ChatWidget
@@ -112,19 +112,15 @@ function SessionManager:new(tab_page_id)
     local TodoList = require("agentic.ui.todo_list")
     local AgentConfigOptions = require("agentic.acp.agent_config_options")
 
-    local active_bufnr = 0
-    local ok_tab, win = pcall(vim.api.nvim_tabpage_get_win, tab_page_id)
-    if ok_tab and win then
-        local ok_buf, buf = pcall(vim.api.nvim_win_get_buf, win)
-        if ok_buf and buf then
-            active_bufnr = buf
-        end
-    end
+    local win = vim.api.nvim_tabpage_get_win(tab_page_id)
+    local active_bufnr = vim.api.nvim_win_get_buf(win)
 
-    local cwd = CwdResolver.resolve({
-        tab_page_id = tab_page_id,
-        bufnr = active_bufnr,
-    })
+    local cwd = vim.api.nvim_win_call(win, function()
+        return CwdResolver.resolve({
+            tab_page_id = tab_page_id,
+            bufnr = active_bufnr,
+        })
+    end)
 
     self = setmetatable({
         session_id = nil,

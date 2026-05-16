@@ -10,8 +10,10 @@ local CwdResolver = {}
 --- normalized path. Resolution order:
 ---   1. `Config.cwd(context)`, if a function is configured and returns a
 ---      string that is non-empty after trimming whitespace
----   2. `vim.fn.getcwd()` fallback (respects window-local `:lcd`,
----      tab-local `:tcd`, then global cwd)
+---   2. `vim.fn.getcwd(0)` fallback — the current window's cwd, so it
+---      respects window-local `:lcd`, tab-local `:tcd`, and global cwd.
+---      When wrapped in `vim.api.nvim_win_call(win, ...)`, this resolves
+---      against `win` rather than the caller's current window.
 --- A thrown error from the configured resolver is logged and falls
 --- through to step 2. Whitespace-only output is also logged before
 --- falling through.
@@ -46,7 +48,9 @@ function CwdResolver.resolve(context)
         end
     end
 
-    return vim.fs.normalize(vim.fn.fnamemodify(vim.fn.getcwd(), ":p"))
+    -- getcwd(0) reads from the current window, which nvim_win_call sets
+    -- to the target tab's window when the resolver fires from session_manager.
+    return vim.fs.normalize(vim.fn.fnamemodify(vim.fn.getcwd(0), ":p"))
 end
 
 return CwdResolver

@@ -204,7 +204,7 @@
 --- Context passed to a `cwd` resolver function
 --- @class agentic.CwdResolverContext
 --- @field tab_page_id integer Tabpage ID owning the new session
---- @field bufnr integer Buffer that was active in the tabpage when the session was created
+--- @field bufnr integer Buffer that was active in the target tab's current window when the SessionManager was constructed
 
 --- Resolver for the per-session working directory. Receives the call
 --- context and returns a path string (absolute or `~`-prefixed), or

@@ -1682,7 +1682,7 @@ describe("agentic.SessionManager", function()
         it("falls back to vim.fn.getcwd() when Config.cwd is nil", function()
             Config.cwd = nil
             local tab_page_id = vim.api.nvim_get_current_tabpage()
-            local expected = vim.fn.getcwd()
+            local expected = vim.fn.getcwd(0)
 
             local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
 
@@ -1706,6 +1706,37 @@ describe("agentic.SessionManager", function()
             assert.equal(tab_page_id, received_ctx.tab_page_id)
             assert.equal(current_bufnr, received_ctx.bufnr)
         end)
+
+        it(
+            "resolver getcwd() sees the target tab's window context, not the current tab",
+            function()
+                -- Use the getcwd(0) fallback path so the test exercises
+                -- whether nvim_win_call positions us in the target window.
+                Config.cwd = nil
+
+                local original_tab = vim.api.nvim_get_current_tabpage()
+                -- Apply a window-local lcd so the target tab has a distinct cwd
+                vim.cmd("lcd /tmp")
+                local target_cwd = vim.fn.getcwd()
+
+                -- Create a second tab (becomes current) with a different lcd
+                vim.cmd("tabnew")
+                vim.cmd("lcd /")
+                -- sanity: two tabs have different cwds
+                assert.is_true(vim.fn.getcwd() ~= target_cwd)
+
+                -- Construct a SessionManager for the ORIGINAL tab while the
+                -- new tab is current
+                local session = SessionManager:new(original_tab) --[[@as agentic.SessionManager]]
+
+                -- Clean up the extra tab before asserting
+                vim.cmd("tabclose")
+                -- Restore cwd for the original tab
+                vim.cmd("lcd -")
+
+                assert.equal(target_cwd, session.cwd)
+            end
+        )
 
         it("passes self.cwd as first arg to agent:create_session", function()
             Config.cwd = function()
