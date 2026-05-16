@@ -16,15 +16,13 @@ describe("CwdResolver.resolve", function()
     --- @type agentic.UserConfig.CwdResolver|nil
     local original_config_cwd
 
+    local function expected_fallback()
+        return vim.fs.normalize(vim.fn.fnamemodify(original_cwd, ":p"))
+    end
+
     local CONTEXT = { tab_page_id = 1, bufnr = 1 }
 
     before_each(function()
-        -- Other tests in the suite (e.g. session_restore.test.lua) clear
-        -- package.loaded["agentic.utils.logger"], leaving CwdResolver
-        -- bound to a stale Logger table. Reload CwdResolver so its
-        -- internal Logger reference matches the current module.
-        package.loaded["agentic.utils.cwd_resolver"] = nil
-
         CwdResolver = require("agentic.utils.cwd_resolver")
         Config = require("agentic.config")
         Logger = require("agentic.utils.logger")
@@ -46,7 +44,7 @@ describe("CwdResolver.resolve", function()
 
         local result = CwdResolver.resolve(CONTEXT)
 
-        assert.equal(original_cwd, result)
+        assert.equal(expected_fallback(), result)
     end)
 
     it("invokes the resolver function with the given context", function()
@@ -65,18 +63,37 @@ describe("CwdResolver.resolve", function()
         assert.equal(CONTEXT.bufnr, received_ctx.bufnr)
     end)
 
-    it(
-        "returns expanded path when resolver function returns a string",
-        function()
-            Config.cwd = function()
-                return "/tmp"
-            end
-
-            local result = CwdResolver.resolve(CONTEXT)
-
-            assert.equal("/tmp", result)
+    it("expands tilde-home in resolver output", function()
+        Config.cwd = function()
+            return "~/code"
         end
-    )
+
+        local result = CwdResolver.resolve(CONTEXT)
+
+        local expected = vim.fs.normalize(vim.fn.fnamemodify("~/code", ":p"))
+        assert.equal(expected, result)
+    end)
+
+    it("absolutizes a relative path in resolver output", function()
+        Config.cwd = function()
+            return "./subdir"
+        end
+
+        local result = CwdResolver.resolve(CONTEXT)
+
+        local expected = vim.fs.normalize(vim.fn.fnamemodify("./subdir", ":p"))
+        assert.equal(expected, result)
+    end)
+
+    it("strips trailing slash in resolver output", function()
+        Config.cwd = function()
+            return "/tmp/foo/"
+        end
+
+        local result = CwdResolver.resolve(CONTEXT)
+
+        assert.equal("/tmp/foo", result)
+    end)
 
     it("falls back to getcwd() when resolver function returns nil", function()
         Config.cwd = function()
@@ -85,7 +102,7 @@ describe("CwdResolver.resolve", function()
 
         local result = CwdResolver.resolve(CONTEXT)
 
-        assert.equal(original_cwd, result)
+        assert.equal(expected_fallback(), result)
     end)
 
     it(
@@ -97,7 +114,8 @@ describe("CwdResolver.resolve", function()
 
             local result = CwdResolver.resolve(CONTEXT)
 
-            assert.equal(original_cwd, result)
+            assert.equal(expected_fallback(), result)
+            assert.spy(logger_notify_stub).was.called(0)
         end
     )
 
@@ -110,7 +128,25 @@ describe("CwdResolver.resolve", function()
 
             local result = CwdResolver.resolve(CONTEXT)
 
-            assert.equal(original_cwd, result)
+            assert.equal(expected_fallback(), result)
+            assert.spy(logger_notify_stub).was.called(1)
+            assert.equal(vim.log.levels.WARN, logger_notify_stub.calls[1][2])
+        end
+    )
+
+    it(
+        "falls back to getcwd() and warns when resolver returns whitespace-only string",
+        function()
+            Config.cwd = function()
+                return "   \t  "
+            end
+
+            local result = CwdResolver.resolve(CONTEXT)
+
+            assert.equal(
+                vim.fs.normalize(vim.fn.fnamemodify(original_cwd, ":p")),
+                result
+            )
             assert.spy(logger_notify_stub).was.called(1)
             assert.equal(vim.log.levels.WARN, logger_notify_stub.calls[1][2])
         end
