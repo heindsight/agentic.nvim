@@ -1334,19 +1334,29 @@ function SessionManager:_get_system_info()
 
         local git_opts = { cwd = self.cwd, text = true }
 
-        local branch_result =
-            vim.system({ "git", "rev-parse", "--abbrev-ref", "HEAD" }, git_opts)
+        local ok, branch_result = pcall(function()
+            return vim.system(
+                { "git", "rev-parse", "--abbrev-ref", "HEAD" },
+                git_opts
+            )
                 :wait()
-        if branch_result.code == 0 and branch_result.stdout then
+        end)
+        if ok and branch_result.code == 0 and branch_result.stdout then
             local branch = vim.trim(branch_result.stdout)
             if branch ~= "" then
                 res = res .. string.format("\n- Current branch: %s", branch)
             end
         end
 
-        local changed_result =
-            vim.system({ "git", "status", "--porcelain" }, git_opts):wait()
-        if changed_result.code == 0 and changed_result.stdout then
+        local changed_ok, changed_result = pcall(function()
+            return vim.system({ "git", "status", "--porcelain" }, git_opts)
+                :wait()
+        end)
+        if
+            changed_ok
+            and changed_result.code == 0
+            and changed_result.stdout
+        then
             local changed = (changed_result.stdout):gsub("\n$", "")
             if changed ~= "" then
                 local files = vim.split(changed, "\n")
@@ -1357,14 +1367,20 @@ function SessionManager:_get_system_info()
             end
         end
 
-        local commits_result = vim.system({
-            "git",
-            "log",
-            "-3",
-            "--oneline",
-            "--format=%h (%ar) %an: %s",
-        }, git_opts):wait()
-        if commits_result.code == 0 and commits_result.stdout then
+        local commits_ok, commits_result = pcall(function()
+            return vim.system({
+                "git",
+                "log",
+                "-3",
+                "--oneline",
+                "--format=%h (%ar) %an: %s",
+            }, git_opts):wait()
+        end)
+        if
+            commits_ok
+            and commits_result.code == 0
+            and commits_result.stdout
+        then
             local commits = (commits_result.stdout):gsub("\n$", "")
             if commits ~= "" then
                 local commit_lines = vim.split(commits, "\n")

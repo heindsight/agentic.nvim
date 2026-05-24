@@ -1,3 +1,4 @@
+--- @diagnostic disable: invisible
 local assert = require("tests.helpers.assert")
 local spy = require("tests.helpers.spy")
 
@@ -195,6 +196,53 @@ describe("FilePicker:scan_files", function()
                 end
             end
         )
+    end)
+
+    describe("vim.system spawn errors", function()
+        it(
+            "scan_files skips a command that throws and tries the next",
+            function()
+                FilePicker.CMD_RG[1] = "echo"
+                FilePicker.CMD_FD[1] = "echo"
+                FilePicker.CMD_GIT[1] = "nonexistent_git"
+
+                local call_idx = 0
+                system_stub = spy.stub(vim, "system")
+                system_stub:invokes(function()
+                    call_idx = call_idx + 1
+                    if call_idx == 1 then
+                        error("ENOENT: no such file or directory")
+                    end
+                    return {
+                        wait = function()
+                            return {
+                                code = 0,
+                                stdout = "a.lua\nb.lua\n",
+                            }
+                        end,
+                    }
+                end)
+
+                local files = picker:scan_files()
+
+                assert.equal(2, #files)
+            end
+        )
+
+        it("_build_scan_commands excludes git when rev-parse throws", function()
+            FilePicker.CMD_RG[1] = "nonexistent_rg"
+            FilePicker.CMD_FD[1] = "nonexistent_fd"
+            FilePicker.CMD_GIT[1] = "echo"
+
+            system_stub = spy.stub(vim, "system")
+            system_stub:invokes(function()
+                error("ENOENT: no such file or directory")
+            end)
+
+            local commands = picker:_build_scan_commands()
+
+            assert.equal(0, #commands)
+        end)
     end)
 
     describe("real commands", function()

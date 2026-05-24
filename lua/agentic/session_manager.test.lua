@@ -1806,6 +1806,25 @@ describe("agentic.SessionManager", function()
             end
         end)
 
+        it("does not throw when vim.system raises a spawn error", function()
+            system_stub:invokes(function()
+                error("ENOENT: no such file or directory")
+            end)
+            local session = {
+                cwd = "/fake/repo",
+                _get_system_info = SessionManager._get_system_info,
+            } --[[@as agentic.SessionManager]]
+
+            local info
+            assert.has_no_errors(function()
+                info = session:_get_system_info()
+            end)
+
+            assert.truthy(info:match("environment_info"))
+            assert.truthy(info:match("Git repository"))
+            assert.truthy(info:match("Project root"))
+        end)
+
         it("includes Project root from self.cwd in output", function()
             fs_root_stub:returns(nil)
             local session = {

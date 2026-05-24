@@ -134,21 +134,35 @@ function FilePicker:scan_files()
         Logger.debug("[FilePicker] Trying command:", vim.inspect(cmd_parts))
         local start_time = vim.loop.hrtime()
 
-        local result =
-            vim.system(cmd_parts, { cwd = self.session_cwd, text = true })
+        local ok, result = pcall(function()
+            return vim.system(
+                cmd_parts,
+                { cwd = self.session_cwd, text = true }
+            )
                 :wait()
+        end)
         local elapsed = (vim.loop.hrtime() - start_time) / 1e6
 
-        Logger.debug(
-            string.format(
-                "[FilePicker] Command completed in %.2fms, exit_code: %d",
-                elapsed,
-                result.code
+        if not ok then
+            Logger.debug(
+                string.format(
+                    "[FilePicker] Command failed in %.2fms: %s",
+                    elapsed,
+                    tostring(result)
+                )
             )
-        )
+        else
+            Logger.debug(
+                string.format(
+                    "[FilePicker] Command completed in %.2fms, exit_code: %d",
+                    elapsed,
+                    result.code
+                )
+            )
+        end
 
-        local output = result.stdout or ""
-        if result.code == 0 and output ~= "" then
+        local output = ok and result.stdout or ""
+        if ok and result.code == 0 and output ~= "" then
             local files = {}
             for line in output:gmatch("[^\n]+") do
                 if line ~= "" then
@@ -231,11 +245,13 @@ function FilePicker:_build_scan_commands()
     end
 
     if vim.fn.executable(FilePicker.CMD_GIT[1]) == 1 then
-        local result = vim.system(
-            { "git", "rev-parse", "--git-dir" },
-            { cwd = self.session_cwd, text = true }
-        ):wait()
-        if result.code == 0 then
+        local ok, result = pcall(function()
+            return vim.system(
+                { "git", "rev-parse", "--git-dir" },
+                { cwd = self.session_cwd, text = true }
+            ):wait()
+        end)
+        if ok and result.code == 0 then
             table.insert(commands, vim.list_extend({}, FilePicker.CMD_GIT))
         end
     end
