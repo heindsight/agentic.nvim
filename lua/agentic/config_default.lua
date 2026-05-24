@@ -58,6 +58,12 @@
 --- @field tab_page_id number The tabpage ID
 --- @field bufnr? number Buffer number if the file is loaded in a buffer
 
+--- Data passed to the on_request_permission hook
+--- @class agentic.UserConfig.RequestPermissionData
+--- @field request agentic.acp.RequestPermission The permission request object
+--- @field session_id string The ACP session ID
+--- @field tab_page_id number The tabpage ID
+
 --- @class agentic.UserConfig.KeymapEntry
 --- @field [1] string The key binding
 --- @field mode string|string[] The mode(s) for this binding
@@ -200,6 +206,11 @@
 --- @field on_response_complete? fun(data: agentic.UserConfig.ResponseCompleteData): nil
 --- @field on_session_update? fun(data: agentic.UserConfig.SessionUpdateData): nil
 --- @field on_file_edit? fun(data: agentic.UserConfig.FileEditData): nil
+--- @field on_request_permission? fun(data: agentic.UserConfig.RequestPermissionData): nil
+
+--- Provider switcher UI behavior
+--- @class agentic.UserConfig.ProviderSwitcher
+--- @field hide_unhealthy_providers boolean Hide providers whose command is not installed
 
 --- Context passed to a `cwd` resolver function
 --- @class agentic.CwdResolverContext
@@ -237,6 +248,7 @@
 --- @class (partial) agentic.PartialUserConfig.Folding.ToolCalls: agentic.UserConfig.Folding.ToolCalls
 --- @class (partial) agentic.PartialUserConfig.ToolCalls.Title: agentic.UserConfig.ToolCalls.Title
 --- @class (partial) agentic.PartialUserConfig.Settings: agentic.UserConfig.Settings
+--- @class (partial) agentic.PartialUserConfig.ProviderSwitcher: agentic.UserConfig.ProviderSwitcher
 
 --- Windows partial with nested type overrides
 --- @class (partial) agentic.PartialUserConfig.Windows: agentic.UserConfig.Windows
@@ -273,6 +285,7 @@
 --- @field folding? agentic.PartialUserConfig.Folding
 --- @field tool_calls? agentic.PartialUserConfig.ToolCalls
 --- @field settings? agentic.PartialUserConfig.Settings
+--- @field provider_switcher? agentic.PartialUserConfig.ProviderSwitcher
 
 --- @class agentic.UserConfig
 --- @field debug boolean Enable printing debug messages which can be read via `:messages`
@@ -296,6 +309,7 @@
 --- @field headers agentic.UserConfig.Headers
 --- @field settings agentic.UserConfig.Settings
 --- @field cwd? agentic.UserConfig.CwdResolver
+--- @field provider_switcher agentic.UserConfig.ProviderSwitcher
 local ConfigDefault = {
     debug = false,
 
@@ -567,6 +581,7 @@ local ConfigDefault = {
         on_response_complete = nil,
         on_session_update = nil,
         on_file_edit = nil,
+        on_request_permission = nil,
     },
 
     headers = {},
@@ -576,6 +591,10 @@ local ConfigDefault = {
     },
 
     cwd = nil,
+
+    provider_switcher = {
+        hide_unhealthy_providers = false,
+    },
 }
 
 return ConfigDefault

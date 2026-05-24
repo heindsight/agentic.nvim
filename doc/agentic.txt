@@ -322,6 +322,14 @@ settings ~
                        window after submitting a prompt.
                        Default: `true`.
 
+                                          *agentic-config-provider-switcher*
+provider_switcher ~
+  Type: `table`
+
+  `hide_unhealthy_providers`  Hide providers whose command is not installed
+                       from the provider switcher UI.
+                       Default: `false`.
+
                                           *agentic-config-hooks*
 hooks ~
   Type: `table`
@@ -730,6 +738,11 @@ Event hooks ~
         -- data.session_id: string
         -- data.tab_page_id: number
         -- data.bufnr: number|nil (if file is loaded in a buffer)
+      end,
+      on_request_permission = function(data)
+        -- data.request: table (contains .toolCall)
+        -- data.session_id: string
+        -- data.tab_page_id: number
       end,
     },
   }
