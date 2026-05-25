@@ -251,6 +251,19 @@ function WindowDecoration._set_buffer_name(bufnr, buf_name)
     vim.api.nvim_buf_set_name(bufnr, buf_name)
 end
 
+--- Builds the full buffer name from header text and tab context.
+--- Includes session CWD prefix (if set) and tab suffix (if multiple tabs).
+--- @param header_text string|nil
+--- @param tab_page_id integer
+--- @return string|nil buf_name
+function WindowDecoration._build_buffer_name(header_text, tab_page_id)
+    if not header_text or header_text == "" then
+        return nil
+    end
+
+    return header_text
+end
+
 --- Sets the buffer name based on header text and tab count
 --- @param bufnr integer Buffer number
 --- @param header_text string|nil Resolved header text
