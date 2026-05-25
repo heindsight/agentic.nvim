@@ -142,7 +142,9 @@ describe("WindowDecoration._build_buffer_name", function()
         local current = vim.api.nvim_get_current_tabpage()
         for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
             if tp ~= current then
-                pcall(vim.cmd, "tabclose " .. vim.api.nvim_tabpage_get_number(tp))
+                pcall(function()
+                    vim.cmd("tabclose " .. vim.api.nvim_tabpage_get_number(tp))
+                end)
             end
         end
     end)
