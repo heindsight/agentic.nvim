@@ -261,19 +261,6 @@ function WindowDecoration._build_buffer_name(header_text, tab_page_id)
         return nil
     end
 
-    return header_text
-end
-
---- Sets the buffer name based on header text and tab count
---- @param bufnr integer Buffer number
---- @param header_text string|nil Resolved header text
---- @param tab_page_id integer Tab page ID for suffix
-local function set_buffer_name(bufnr, header_text, tab_page_id)
-    if not header_text or header_text == "" then
-        return
-    end
-
-    -- Determine if we should show tab suffix based on total tab count
     local total_tabs = #vim.api.nvim_list_tabpages()
 
     --- @type string
@@ -284,6 +271,22 @@ local function set_buffer_name(bufnr, header_text, tab_page_id)
         buf_name = header_text
     end
 
+    local session_cwd = vim.t[tab_page_id].agentic_session_cwd
+    if session_cwd then
+        buf_name = session_cwd .. "/" .. buf_name
+    end
+
+    return buf_name
+end
+
+--- @param bufnr integer
+--- @param header_text string|nil
+--- @param tab_page_id integer
+local function set_buffer_name(bufnr, header_text, tab_page_id)
+    local buf_name = WindowDecoration._build_buffer_name(header_text, tab_page_id)
+    if not buf_name then
+        return
+    end
     WindowDecoration._set_buffer_name(bufnr, buf_name)
 end
 
