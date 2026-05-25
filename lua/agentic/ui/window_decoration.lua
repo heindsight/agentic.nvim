@@ -283,7 +283,8 @@ end
 --- @param header_text string|nil
 --- @param tab_page_id integer
 local function set_buffer_name(bufnr, header_text, tab_page_id)
-    local buf_name = WindowDecoration._build_buffer_name(header_text, tab_page_id)
+    local buf_name =
+        WindowDecoration._build_buffer_name(header_text, tab_page_id)
     if not buf_name then
         return
     end
