@@ -136,29 +136,39 @@ describe("WindowDecoration._build_buffer_name", function()
     before_each(function()
         package.loaded["agentic.ui.window_decoration"] = nil
         WindowDecoration = require("agentic.ui.window_decoration")
+
+        -- Close leaked tabpages from earlier test files so single-tab
+        -- tests see exactly one tabpage.
+        local current = vim.api.nvim_get_current_tabpage()
+        for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
+            if tp ~= current then
+                pcall(vim.cmd, "tabclose " .. vim.api.nvim_tabpage_get_number(tp))
+            end
+        end
     end)
 
-    it(
-        "prefixes with session CWD when agentic_session_cwd is set",
-        function()
-            local tab_page_id = vim.api.nvim_get_current_tabpage()
-            vim.t[tab_page_id].agentic_session_cwd = "/home/user/project"
+    it("prefixes with session CWD when agentic_session_cwd is set", function()
+        local tab_page_id = vim.api.nvim_get_current_tabpage()
+        vim.t[tab_page_id].agentic_session_cwd = "/home/user/project"
 
-            local result =
-                WindowDecoration._build_buffer_name("󰻞 Agentic Chat", tab_page_id)
+        local result = WindowDecoration._build_buffer_name(
+            "󰻞 Agentic Chat",
+            tab_page_id
+        )
 
-            assert.equal("/home/user/project/󰻞 Agentic Chat", result)
+        assert.equal("/home/user/project/󰻞 Agentic Chat", result)
 
-            vim.t[tab_page_id].agentic_session_cwd = nil
-        end
-    )
+        vim.t[tab_page_id].agentic_session_cwd = nil
+    end)
 
     it("falls back to bare header when no session CWD is set", function()
         local tab_page_id = vim.api.nvim_get_current_tabpage()
         vim.t[tab_page_id].agentic_session_cwd = nil
 
-        local result =
-            WindowDecoration._build_buffer_name("󰻞 Agentic Chat", tab_page_id)
+        local result = WindowDecoration._build_buffer_name(
+            "󰻞 Agentic Chat",
+            tab_page_id
+        )
 
         assert.equal("󰻞 Agentic Chat", result)
     end)
@@ -171,8 +181,10 @@ describe("WindowDecoration._build_buffer_name", function()
         vim.cmd("tabnew")
         local tab2 = vim.api.nvim_get_current_tabpage()
 
-        local result =
-            WindowDecoration._build_buffer_name("󰻞 Agentic Chat", tab_page_id)
+        local result = WindowDecoration._build_buffer_name(
+            "󰻞 Agentic Chat",
+            tab_page_id
+        )
 
         assert.equal(
             string.format(
