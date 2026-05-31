@@ -223,6 +223,33 @@ local function find_buf_by_name(name, exclude_bufnr)
     return nil
 end
 
+--- Renames `buf` to `name` without emitting the file-rename autocmds
+--- (BufFilePre/BufFilePost). These are nofile widget buffers whose names are
+--- purely cosmetic; those events signal a file-identity change, so emitting
+--- them on a header refresh wrongly tells downstream plugins their cached
+--- buffer-local state is stale (e.g. vim-fugitive unlets b:git_dir on
+--- BufFilePost). 'eventignore' is global, so the suppression is scoped to
+--- this single synchronous rename call: nothing else runs inside it (Lua is
+--- single-threaded and the call cannot yield), and suppressing both events
+--- means no third-party handler can reentrantly rename another buffer and
+--- lose its own events. Regression:
+--- ``window_decoration.test.lua::"does not fire BufFilePre/BufFilePost when
+--- renaming a buffer"``.
+--- @param buf integer
+--- @param name string
+local function rename_without_file_events(buf, name)
+    local saved_eventignore = vim.opt.eventignore:get()
+    vim.opt.eventignore:append({ "BufFilePre", "BufFilePost" })
+
+    local ok, err = pcall(vim.api.nvim_buf_set_name, buf, name)
+
+    vim.opt.eventignore = saved_eventignore
+
+    if not ok then
+        error(err)
+    end
+end
+
 --- Assigns `buf_name` to `bufnr`, renaming any pre-existing buffer
 --- that already holds the name to `<buf_name>-old-N` (lowest free N
 --- starting at 1) to keep names unique.
@@ -242,13 +269,13 @@ function WindowDecoration._set_buffer_name(bufnr, buf_name)
     while collider do
         local candidate = buf_name .. "-old-" .. n
         if not find_buf_by_name(candidate, bufnr) then
-            vim.api.nvim_buf_set_name(collider, candidate)
+            rename_without_file_events(collider, candidate)
             break
         end
         n = n + 1
     end
 
-    vim.api.nvim_buf_set_name(bufnr, buf_name)
+    rename_without_file_events(bufnr, buf_name)
 end
 
 --- Sets the buffer name based on header text and tab count

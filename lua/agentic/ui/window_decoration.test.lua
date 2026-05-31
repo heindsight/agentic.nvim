@@ -127,4 +127,41 @@ describe("WindowDecoration._set_buffer_name", function()
 
         assert_buf_name(name, bufnr)
     end)
+
+    -- The cosmetic rename must still happen, but without emitting the
+    -- file-rename events that wipe downstream buffer-local state (e.g.
+    -- vim-fugitive unlets b:git_dir on BufFilePost).
+    for _, event in ipairs({ "BufFilePre", "BufFilePost" }) do
+        it(
+            string.format("does not fire %s when renaming a buffer", event),
+            function()
+                local bufnr = new_buf()
+                local original = vim.fn.tempname() .. "_orig"
+                local renamed = vim.fn.tempname() .. "_renamed"
+                vim.api.nvim_buf_set_name(bufnr, original)
+                vim.api.nvim_set_current_buf(bufnr)
+
+                local fired = 0
+                local group = vim.api.nvim_create_augroup(
+                    "agentic_window_decoration_file_event_test",
+                    { clear = true }
+                )
+                vim.api.nvim_create_autocmd(event, {
+                    group = group,
+                    callback = function(args)
+                        if args.buf == bufnr then
+                            fired = fired + 1
+                        end
+                    end,
+                })
+
+                WindowDecoration._set_buffer_name(bufnr, renamed)
+
+                vim.api.nvim_del_augroup_by_id(group)
+
+                assert_buf_name(renamed, bufnr)
+                assert.equal(0, fired)
+            end
+        )
+    end
 end)
