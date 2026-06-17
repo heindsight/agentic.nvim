@@ -23,11 +23,6 @@
 ---
 --- The context field is managed internally and shows dynamic info like counts.
 ---
---- Buffer names are formed as `<session_cwd>/<resolved_header_text>`, so
---- plugins that derive project context from buffer paths (rooter, project.nvim,
---- statusline plugins) resolve to the session's project directory. The winbar
---- shows the resolved header text as-is, without the CWD prefix.
----
 --- @alias agentic.UserConfig.Headers table<agentic.ui.ChatWidget.PanelNames, agentic.ui.ChatWidget.HeaderParts|agentic.UserConfig.HeaderRenderFn|nil>
 
 --- Data passed to the on_create_session_response hook

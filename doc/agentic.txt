@@ -347,11 +347,6 @@ headers ~
   table with `title` and `suffix` fields, or a function that receives
   header parts and returns a custom string.
 
-  Buffer names are formed as `<session_cwd>/<resolved_header_text>`,
-  so plugins that derive project context from buffer paths resolve to
-  the session's project directory. The winbar shows the resolved
-  header text as-is, without the CWD prefix.
-
 >lua
   --- @type agentic.PartialUserConfig
   opts = {

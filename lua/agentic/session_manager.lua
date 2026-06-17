@@ -142,8 +142,6 @@ function SessionManager:new(tab_page_id)
         _header_refresh_scheduled = false,
     }, self)
 
-    vim.t[tab_page_id].agentic_session_cwd = cwd
-
     local agent = AgentInstance.get_instance(Config.provider, function(_client)
         vim.schedule(function()
             -- Guard: cached client may be dead
