@@ -97,6 +97,40 @@ function WindowDecoration.set_headers_state(tab_page_id, headers)
     end
 end
 
+--- Calls a user-supplied function expected to return `string|nil`, capturing
+--- runtime errors and type violations as a formatted message.
+--- @param fn fun(...): any User function to call
+--- @param arg any Single argument passed to the function
+--- @param label string Identifier (e.g. "custom header"/"buffer_name") for error text
+--- @param name string Window name for error text
+--- @return string|nil result The returned string, or nil on error/nil-return
+--- @return string|nil error_message Formatted error, or nil when valid
+local function call_string_fn(fn, arg, label, name)
+    local ok, result = pcall(fn, arg)
+    if not ok then
+        return nil,
+            string.format(
+                "Error in %s function for '%s': %s",
+                label,
+                name,
+                result
+            )
+    end
+    if result == nil then
+        return nil, nil
+    end
+    if type(result) ~= "string" then
+        return nil,
+            string.format(
+                "%s function for '%s' must return string|nil, got %s",
+                label,
+                name,
+                type(result)
+            )
+    end
+    return result, nil
+end
+
 --- Resolves the final header text applying user customization
 --- Returns the header text and an error message if user function failed
 --- @param dynamic_header agentic.ui.ChatWidget.HeaderParts Runtime header parts
@@ -112,25 +146,17 @@ local function resolve_header_text(dynamic_header, window_name)
 
     -- User function: call it and validate return
     if type(user_header) == "function" then
-        local ok, result = pcall(user_header, dynamic_header)
-        if not ok then
-            return concat_header_parts(dynamic_header),
-                string.format(
-                    "Error in custom header function for '%s': %s",
-                    window_name,
-                    result
-                )
+        local result, err = call_string_fn(
+            user_header,
+            dynamic_header,
+            "custom header",
+            window_name
+        )
+        if err then
+            return concat_header_parts(dynamic_header), err
         end
         if result == nil or result == "" then
             return nil, nil -- User explicitly wants no header
-        end
-        if type(result) ~= "string" then
-            return concat_header_parts(dynamic_header),
-                string.format(
-                    "Custom header function for '%s' must return string|nil, got %s",
-                    window_name,
-                    type(result)
-                )
         end
         return result, nil
     end
@@ -251,12 +277,64 @@ function WindowDecoration._set_buffer_name(bufnr, buf_name)
     vim.api.nvim_buf_set_name(bufnr, buf_name)
 end
 
+--- Resolves the buffer name from config, supporting string or function values
+--- @param window_name string Window name for Config.windows[name].buffer_name lookup
+--- @param header_parts agentic.ui.ChatWidget.HeaderParts Header parts passed to function-type buffer_name
+--- @param fallback string|nil Fallback name (resolved header text) when buffer_name is not set
+--- @return string|nil name
+local function resolve_buffer_name(window_name, header_parts, fallback)
+    local win_cfg = Config.windows[window_name]
+    local buffer_name = win_cfg and win_cfg.buffer_name
+
+    if buffer_name == nil then
+        return fallback
+    end
+
+    if type(buffer_name) == "string" then
+        return buffer_name
+    end
+
+    if type(buffer_name) == "function" then
+        local result, err = call_string_fn(
+            buffer_name,
+            header_parts,
+            "buffer_name",
+            window_name
+        )
+        if err then
+            Logger.notify(err)
+        end
+        if result == nil then
+            return fallback
+        end
+        return result
+    end
+
+    Logger.notify(
+        string.format(
+            "buffer_name for '%s' must be string|function|nil, got %s",
+            window_name,
+            type(buffer_name)
+        )
+    )
+    return fallback
+end
+
 --- Sets the buffer name based on header text and tab count
 --- @param bufnr integer Buffer number
 --- @param header_text string|nil Resolved header text
 --- @param tab_page_id integer Tab page ID for suffix
-local function set_buffer_name(bufnr, header_text, tab_page_id)
-    if not header_text or header_text == "" then
+--- @param window_name string Window name for Config.windows[name].buffer_name lookup
+--- @param header_parts agentic.ui.ChatWidget.HeaderParts Header parts for function-type buffer_name
+local function set_buffer_name(
+    bufnr,
+    header_text,
+    tab_page_id,
+    window_name,
+    header_parts
+)
+    local name = resolve_buffer_name(window_name, header_parts, header_text)
+    if not name or name == "" then
         return
     end
 
@@ -266,9 +344,9 @@ local function set_buffer_name(bufnr, header_text, tab_page_id)
     --- @type string
     local buf_name
     if total_tabs > 1 then
-        buf_name = string.format("%s (Tab %d)", header_text, tab_page_id)
+        buf_name = string.format("%s (Tab %d)", name, tab_page_id)
     else
-        buf_name = header_text
+        buf_name = name
     end
 
     WindowDecoration._set_buffer_name(bufnr, buf_name)
@@ -319,7 +397,13 @@ function WindowDecoration.render_header(bufnr, window_name, context)
         local text = (header_text and header_text ~= "") and header_text or ""
 
         set_winbar(winid, text)
-        set_buffer_name(bufnr, header_text, tab_page_id)
+        set_buffer_name(
+            bufnr,
+            header_text,
+            tab_page_id,
+            window_name,
+            dynamic_header
+        )
     end)
 end
 
