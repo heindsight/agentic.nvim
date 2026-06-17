@@ -185,11 +185,15 @@ end
 --- - else absolute
 --- Use this for paths that are meaningful relative to a specific directory
 --- (e.g. an ACP session's working directory) rather than vim's current CWD.
+--- Symlinks are resolved first so a file reached through a symlinked path
+--- collapses to its real location (matching `to_smart_path`, whose `:p` on a
+--- relative path resolves symlinks). Without this, an absolute symlink path is
+--- left unresolved by `:p` and would render as a duplicate display entry.
 --- @param path string
 --- @param base string Absolute base directory to anchor against
 --- @return string smart_path
 function FileSystem.to_smart_path_from(path, base)
-    local abs = vim.fn.fnamemodify(path, ":p")
+    local abs = vim.fn.fnamemodify(vim.fn.resolve(path), ":p")
     local prefix = base:gsub("/+$", "") .. "/"
     if abs:sub(1, #prefix) == prefix then
         return abs:sub(#prefix + 1)
