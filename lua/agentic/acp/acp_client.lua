@@ -1,4 +1,5 @@
 local Logger = require("agentic.utils.logger")
+local JsonFormat = require("agentic.utils.json_format")
 local transport_module = require("agentic.acp.acp_transport")
 
 --- Known ACP protocol tool call kinds.
@@ -466,6 +467,31 @@ function ACPClient:__build_tool_call_message(update)
         local first_location = update.locations[1]
         if first_location and first_location.path then
             message.file_path = first_location.path
+        end
+    end
+
+    -- Surface rawInput for tool calls with no content and no diff (e.g.
+    -- OpenCode's bash command lives only in rawInput). Skip `read` -- its
+    -- renderer treats #body as a line count and would print a bogus number.
+    if
+        not message.body
+        and not message.diff
+        and update.kind ~= "read"
+        and raw_input
+        and not vim.tbl_isempty(raw_input)
+    then
+        if type(raw_input.command) == "string" and raw_input.command ~= "" then
+            -- OpenCode execute tools: the command is the meaningful title and
+            -- the optional description reads better than raw JSON.
+            message.argument = raw_input.command
+            if
+                type(raw_input.description) == "string"
+                and raw_input.description ~= ""
+            then
+                message.body = self:safe_split(raw_input.description)
+            end
+        else
+            message.body = vim.split(JsonFormat.format_value(raw_input), "\n")
         end
     end
 
