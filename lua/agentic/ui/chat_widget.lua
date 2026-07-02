@@ -46,6 +46,7 @@ local WidgetLayout = require("agentic.ui.widget_layout")
 --- @field _avoid_auto_close_cmd fun(self: agentic.ui.ChatWidget, fn: fun())
 --- @field _hidden_chat_winid? integer
 --- @field _header_refresh_scheduled boolean Guards coalesced header refresh
+--- @field session_state? agentic.acp.SessionState Live session state forwarded to header/buffer_name callbacks; set by SessionManager
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
 
@@ -57,6 +58,7 @@ function ChatWidget:new(tab_page_id, on_submit_input)
     self.win_nrs = {}
     self.current_position = Config.windows.position
     self._header_refresh_scheduled = false
+    self.session_state = nil
 
     self.on_submit_input = on_submit_input
     self.tab_page_id = tab_page_id
@@ -536,10 +538,58 @@ local function find_keymap(keymaps, mode)
     end
 end
 
+--- Computes the mode-aware submit/change-mode hint for the input header.
+--- Both hints live on the input header only. Returns nil for modes with no
+--- relevant binding (e.g. command mode) so callers keep the last shown hint.
+--- @param mode string
+--- @return string|nil suffix
+function ChatWidget._compute_input_suffix(mode)
+    local submit_key = find_keymap(Config.keymaps.prompt.submit, mode)
+    local change_mode_key = find_keymap(Config.keymaps.widget.change_mode, mode)
+
+    local hints = {}
+    if submit_key ~= nil then
+        hints[#hints + 1] = string.format("submit: %s", submit_key)
+    end
+    if change_mode_key ~= nil then
+        hints[#hints + 1] = string.format("change mode: %s", change_mode_key)
+    end
+
+    if #hints == 0 then
+        return nil
+    end
+
+    return table.concat(hints, " | ")
+end
+
+--- Persists the input header suffix for the current mode and re-renders it.
+--- @param mode string
+function ChatWidget:_apply_input_suffix(mode)
+    if not vim.api.nvim_tabpage_is_valid(self.tab_page_id) then
+        return
+    end
+
+    local suffix = ChatWidget._compute_input_suffix(mode)
+    if suffix == nil then
+        return
+    end
+
+    -- Get headers from tabpage-local storage (must reassign after modification)
+    local headers = WindowDecoration.get_headers_state(self.tab_page_id)
+    headers.input.suffix = suffix
+
+    -- Reassign to persist changes
+    WindowDecoration.set_headers_state(self.tab_page_id, headers)
+
+    self:render_header("input")
+end
+
 --- Binds events to change the suffix header texts based on current mode keymaps
 --- For the Chat and Input buffers only
 function ChatWidget:_bind_events_to_change_headers()
-    local tab_page_id = self.tab_page_id
+    -- Seed the input header with the normal-mode hints immediately so it does
+    -- not show the hard-coded default keys until the first mode change.
+    self:_apply_input_suffix("n")
 
     for _, bufnr in ipairs({ self.buf_nrs.chat, self.buf_nrs.input }) do
         vim.api.nvim_create_autocmd("ModeChanged", {
@@ -548,40 +598,7 @@ function ChatWidget:_bind_events_to_change_headers()
                 vim.schedule(function()
                     -- Check if tabpage is still valid before accessing vim.t
                     -- I couldn't test it, it seems to only happen from command -> normal, not from insert -> normal
-                    if not vim.api.nvim_tabpage_is_valid(tab_page_id) then
-                        return
-                    end
-
-                    -- Get headers from tabpage-local storage (must reassign after modification)
-                    local headers =
-                        WindowDecoration.get_headers_state(tab_page_id)
-
-                    local mode = vim.fn.mode()
-                    local change_mode_key =
-                        find_keymap(Config.keymaps.widget.change_mode, mode)
-
-                    if change_mode_key ~= nil then
-                        headers.chat.suffix =
-                            string.format("%s: change mode", change_mode_key)
-                    else
-                        headers.chat.suffix = nil
-                    end
-
-                    local submit_key =
-                        find_keymap(Config.keymaps.prompt.submit, mode)
-
-                    if submit_key ~= nil then
-                        headers.input.suffix =
-                            string.format("%s: submit", submit_key)
-                    else
-                        headers.input.suffix = nil
-                    end
-
-                    -- Reassign to persist changes
-                    WindowDecoration.set_headers_state(tab_page_id, headers)
-
-                    self:render_header("chat")
-                    self:render_header("input")
+                    self:_apply_input_suffix(vim.fn.mode())
                 end)
             end,
         })
@@ -596,7 +613,12 @@ function ChatWidget:render_header(window_name, context)
         return
     end
 
-    WindowDecoration.render_header(bufnr, window_name, context)
+    WindowDecoration.render_header(
+        bufnr,
+        window_name,
+        context,
+        self.session_state
+    )
 end
 
 --- @param panel_name agentic.ui.ChatWidget.PanelNames
@@ -780,18 +802,29 @@ function ChatWidget:schedule_header_refresh()
     -- re-renders when multiple updates come in quick succession
     vim.defer_fn(function()
         self._header_refresh_scheduled = false
+        self:_render_dynamic_headers()
+    end, 150)
+end
 
-        local headers = Config.headers
-        if type(headers) ~= "table" then
-            return
-        end
+--- Re-render every session-driven header. The chat and input panels are
+--- always dynamic (their default headers consume session_state), plus any
+--- panel the user configured as a header function.
+function ChatWidget:_render_dynamic_headers()
+    --- @type table<agentic.ui.ChatWidget.PanelNames, boolean>
+    local panels = { chat = true, input = true }
 
+    local headers = Config.headers
+    if type(headers) == "table" then
         for panel_name, header_config in pairs(headers) do
             if type(header_config) == "function" then
-                self:render_header(panel_name)
+                panels[panel_name] = true
             end
         end
-    end, 150)
+    end
+
+    for panel_name in pairs(panels) do
+        self:render_header(panel_name)
+    end
 end
 
 return ChatWidget

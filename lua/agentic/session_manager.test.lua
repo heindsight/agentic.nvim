@@ -18,6 +18,8 @@ describe("agentic.SessionManager", function()
         local notify_stub
         --- @type TestSpy
         local render_header_spy
+        --- @type TestSpy
+        local refresh_spy
         --- @type agentic.SessionManager
         local session
         --- @type integer
@@ -26,6 +28,7 @@ describe("agentic.SessionManager", function()
         before_each(function()
             notify_stub = spy.stub(Logger, "notify")
             render_header_spy = spy.new(function() end)
+            refresh_spy = spy.new(function() end)
             test_bufnr = vim.api.nvim_create_buf(false, true)
 
             local legacy_modes = AgentModes:new()
@@ -47,6 +50,7 @@ describe("agentic.SessionManager", function()
                 },
                 widget = {
                     render_header = render_header_spy,
+                    schedule_header_refresh = refresh_spy,
                     buf_nrs = { chat = test_bufnr },
                 },
                 _on_session_update = SessionManager._on_session_update,
@@ -70,6 +74,7 @@ describe("agentic.SessionManager", function()
             assert.spy(render_header_spy).was.called(1)
             assert.equal("chat", render_header_spy.calls[1][2])
             assert.equal("Mode: Code", render_header_spy.calls[1][3])
+            assert.spy(refresh_spy).was.called(1)
 
             assert.spy(notify_stub).was.called(1)
             assert.equal("Mode changed to: code", notify_stub.calls[1][1])
@@ -84,6 +89,7 @@ describe("agentic.SessionManager", function()
                 session.config_options.legacy_agent_modes.current_mode_id
             )
             assert.spy(render_header_spy).was.called(0)
+            assert.spy(refresh_spy).was.called(0)
 
             assert.spy(notify_stub).was.called(1)
             assert.equal(vim.log.levels.WARN, notify_stub.calls[1][2])
@@ -93,6 +99,8 @@ describe("agentic.SessionManager", function()
     describe("_on_session_update: config_option_update", function()
         --- @type TestSpy
         local render_header_spy
+        --- @type TestSpy
+        local refresh_spy
         --- @type agentic.SessionManager
         local session
         --- @type integer
@@ -100,6 +108,7 @@ describe("agentic.SessionManager", function()
 
         before_each(function()
             render_header_spy = spy.new(function() end)
+            refresh_spy = spy.new(function() end)
             test_bufnr = vim.api.nvim_create_buf(false, true)
 
             local AgentConfigOptions =
@@ -119,11 +128,11 @@ describe("agentic.SessionManager", function()
                 config_options = config_opts,
                 widget = {
                     render_header = render_header_spy,
+                    schedule_header_refresh = refresh_spy,
                     buf_nrs = { chat = test_bufnr },
                 },
                 _on_session_update = SessionManager._on_session_update,
                 _set_mode_to_chat_header = SessionManager._set_mode_to_chat_header,
-                _refresh_mode_header = SessionManager._refresh_mode_header,
                 _handle_new_config_options = SessionManager._handle_new_config_options,
             } --[[@as agentic.SessionManager]]
         end)
@@ -160,6 +169,7 @@ describe("agentic.SessionManager", function()
             assert.equal("plan", session.config_options.mode.currentValue)
             assert.spy(render_header_spy).was.called(1)
             assert.equal("Mode: Plan", render_header_spy.calls[1][3])
+            assert.spy(refresh_spy).was.called(1)
         end)
     end)
 
@@ -696,6 +706,368 @@ describe("agentic.SessionManager", function()
             })
 
             assert.spy(hook_spy).was.called(0)
+        end)
+    end)
+
+    describe("config-change header refresh wiring", function()
+        --- @type TestStub
+        local get_instance_stub
+        --- @type TestStub
+        local notify_stub
+        --- @type TestStub
+        local schedule_stub
+        --- @type TestStub
+        local health_check_stub
+        --- @type TestStub
+        local config_options_new_stub
+        --- @type agentic.acp.AgentConfigOptions.Callbacks
+        local captured_callbacks
+
+        before_each(function()
+            local AgentInstance = require("agentic.acp.agent_instance")
+            local ACPHealth = require("agentic.acp.acp_health")
+            local AgentConfigOptions =
+                require("agentic.acp.agent_config_options")
+            local Config = require("agentic.config")
+
+            notify_stub = spy.stub(Logger, "notify")
+            schedule_stub = spy.stub(vim, "schedule")
+            schedule_stub:invokes(function() end)
+            health_check_stub = spy.stub(ACPHealth, "check_configured_provider")
+            health_check_stub:returns(true)
+
+            local real_new = AgentConfigOptions.new
+            config_options_new_stub = spy.stub(AgentConfigOptions, "new")
+            config_options_new_stub:invokes(function(s, buffers, callbacks)
+                captured_callbacks = callbacks
+                return real_new(s, buffers, callbacks)
+            end)
+
+            get_instance_stub = spy.stub(AgentInstance, "get_instance")
+            get_instance_stub:invokes(function(provider_name, callback)
+                --- @type agentic.acp.ACPClient
+                local fake = {}
+                fake.state = "ready"
+                fake.provider_config = {
+                    name = provider_name or "Test",
+                    initial_model = nil,
+                    default_mode = nil,
+                }
+                fake.agent_info = {}
+                function fake:create_session(_h, cb)
+                    cb({
+                        sessionId = "test-session",
+                        configOptions = nil,
+                        modes = nil,
+                        models = nil,
+                    })
+                end
+                function fake:cancel_session() end
+                if callback then
+                    callback(fake)
+                end
+                return fake
+            end)
+            Config.provider = "TestProvider"
+        end)
+
+        after_each(function()
+            notify_stub:revert()
+            schedule_stub:revert()
+            health_check_stub:revert()
+            get_instance_stub:revert()
+            config_options_new_stub:revert()
+
+            local SessionRegistry = require("agentic.session_registry")
+            local tab_ids = {}
+            for tab_id, _ in pairs(SessionRegistry.sessions) do
+                table.insert(tab_ids, tab_id)
+            end
+            for _, tab_id in ipairs(tab_ids) do
+                SessionRegistry.destroy_session(tab_id)
+            end
+        end)
+
+        it("schedules a refresh from on_config_options_applied", function()
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+            local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+            local refresh_spy = spy.new(function() end)
+            session.widget.schedule_header_refresh = refresh_spy
+
+            captured_callbacks.on_config_options_applied()
+
+            assert.spy(refresh_spy).was.called(1)
+        end)
+
+        it("schedules a refresh from on_set_mode_success", function()
+            local tab_page_id = vim.api.nvim_get_current_tabpage()
+            local session = SessionManager:new(tab_page_id) --[[@as agentic.SessionManager]]
+            local refresh_spy = spy.new(function() end)
+            session.widget.schedule_header_refresh = refresh_spy
+
+            captured_callbacks.on_set_mode_success("plan")
+
+            assert.spy(refresh_spy).was.called(1)
+        end)
+    end)
+
+    describe("_on_session_update: usage_update", function()
+        local SessionState = require("agentic.acp.session_state")
+        --- @type TestSpy
+        local refresh_spy
+        --- @type TestSpy
+        local render_header_spy
+        --- @type agentic.SessionManager
+        local session
+
+        before_each(function()
+            refresh_spy = spy.new(function() end)
+            render_header_spy = spy.new(function() end)
+
+            local legacy_modes = AgentModes:new()
+            legacy_modes:set_modes({
+                availableModes = {
+                    { id = "plan", name = "Plan", description = "Planning" },
+                    { id = "code", name = "Code", description = "Coding" },
+                },
+                currentModeId = "plan",
+            })
+
+            local config_options = {
+                legacy_agent_modes = legacy_modes,
+                mode = nil,
+                set_options = function(self, config_options_update)
+                    self.mode = config_options_update[1]
+                end,
+                get_model_id = function(_self)
+                    return nil
+                end,
+                get_mode_id = function(self)
+                    return self.mode and self.mode.currentValue or nil
+                end,
+                get_mode_name = function(_self, mode_id)
+                    local mode = legacy_modes:get_mode(mode_id)
+                    return mode and mode.name or mode_id
+                end,
+            }
+
+            session = {
+                session_id = "session-1",
+                tab_page_id = 7,
+                _is_restoring_session = false,
+                config_options = config_options,
+                session_state = SessionState:new(config_options, "Test"),
+                widget = {
+                    schedule_header_refresh = refresh_spy,
+                    render_header = render_header_spy,
+                },
+                agent = { provider_config = { name = "Test" } },
+                _on_session_update = SessionManager._on_session_update,
+                _set_mode_to_chat_header = SessionManager._set_mode_to_chat_header,
+                _handle_new_config_options = SessionManager._handle_new_config_options,
+            } --[[@as agentic.SessionManager]]
+        end)
+
+        it("feeds used/size into session_state", function()
+            session:_on_session_update({
+                sessionUpdate = "usage_update",
+                used = 1000,
+                size = 200000,
+            })
+
+            assert.equal(1000, session.session_state:get_context_used_raw())
+            assert.equal(200000, session.session_state:get_context_size_raw())
+        end)
+
+        it("schedules a header refresh", function()
+            session:_on_session_update({
+                sessionUpdate = "usage_update",
+                used = 10,
+                size = 20,
+            })
+
+            assert.spy(refresh_spy).was.called(1)
+        end)
+
+        it("schedules a header refresh for config_option_update", function()
+            session:_on_session_update({
+                sessionUpdate = "config_option_update",
+                configOptions = {
+                    {
+                        id = "mode-1",
+                        category = "mode",
+                        currentValue = "plan",
+                        description = "Mode",
+                        name = "Mode",
+                        options = {
+                            {
+                                value = "plan",
+                                name = "Plan",
+                                description = "",
+                            },
+                        },
+                    },
+                },
+            })
+
+            assert.spy(refresh_spy).was.called(1)
+        end)
+
+        it("schedules a header refresh for current_mode_update", function()
+            session:_on_session_update({
+                sessionUpdate = "current_mode_update",
+                currentModeId = "code",
+            })
+
+            assert.spy(refresh_spy).was.called(1)
+        end)
+    end)
+
+    describe("_cancel_session: session_state clear", function()
+        local SessionState = require("agentic.acp.session_state")
+        --- @type TestStub
+        local slash_commands_stub
+
+        before_each(function()
+            local SlashCommands = require("agentic.acp.slash_commands")
+            slash_commands_stub = spy.stub(SlashCommands, "setCommands")
+        end)
+
+        after_each(function()
+            slash_commands_stub:revert()
+        end)
+
+        --- @param session_id string|nil
+        --- @return agentic.SessionManager
+        local function make_session(session_id)
+            local ChatHistory = require("agentic.ui.chat_history")
+            local config_options = {
+                get_model_id = function() end,
+                get_mode_id = function() end,
+                clear = function() end,
+            }
+            local session_state = SessionState:new(config_options, "Test")
+            session_state:set_usage({ used = 500, size = 1000 })
+
+            return {
+                is_generating = true,
+                _is_restoring_session = true,
+                session_id = session_id,
+                config_options = config_options,
+                session_state = session_state,
+                permission_manager = { clear = function() end },
+                agent = { cancel_session = function() end },
+                widget = {
+                    clear = function() end,
+                    buf_nrs = { input = 1 },
+                },
+                todo_list = { clear = function() end },
+                file_list = { clear = function() end },
+                code_selection = { clear = function() end },
+                diagnostics_list = { clear = function() end },
+                status_animation = { stop = function() end },
+                chat_history = ChatHistory:new(),
+                history_to_send = {},
+                message_writer = {
+                    reset_sender_tracking = function() end,
+                },
+                _cancel_session = SessionManager._cancel_session,
+            } --[[@as agentic.SessionManager]]
+        end
+
+        it("clears usage when a session_id is set", function()
+            local session = make_session("session-1")
+
+            session:_cancel_session()
+
+            assert.is_nil(session.session_state:get_context_used())
+            assert.is_nil(session.session_state:get_context_size())
+        end)
+    end)
+
+    describe("load_acp_session: usage not restored", function()
+        local SessionState = require("agentic.acp.session_state")
+        --- @type TestStub
+        local slash_commands_stub
+
+        before_each(function()
+            local SlashCommands = require("agentic.acp.slash_commands")
+            slash_commands_stub = spy.stub(SlashCommands, "setCommands")
+        end)
+
+        after_each(function()
+            slash_commands_stub:revert()
+        end)
+
+        it("leaves usage nil after snapshot/cancel/restore", function()
+            local ChatHistory = require("agentic.ui.chat_history")
+            local AgentConfigOptions =
+                require("agentic.acp.agent_config_options")
+            local BufHelpers = require("agentic.utils.buf_helpers")
+            local test_bufnr = vim.api.nvim_create_buf(false, true)
+
+            local keymap_stub = spy.stub(BufHelpers, "multi_keymap_set")
+            local config_options = AgentConfigOptions:new(
+                { chat = test_bufnr },
+                {
+                    set_mode = function() end,
+                    set_model = function() end,
+                    set_thought_level = function() end,
+                }
+            )
+            keymap_stub:revert()
+
+            local session_state = SessionState:new(config_options, "Test")
+            session_state:set_usage({ used = 9000, size = 10000 })
+
+            --- @type agentic.SessionManager
+            local session = {
+                is_generating = false,
+                _is_restoring_session = false,
+                session_id = "old-session",
+                config_options = config_options,
+                session_state = session_state,
+                permission_manager = { clear = function() end },
+                agent = {
+                    agent_capabilities = { loadSession = true },
+                    agent_info = nil,
+                    provider_config = { name = "Test" },
+                    cancel_session = function() end,
+                    load_session = function() end,
+                },
+                widget = {
+                    clear = function() end,
+                    buf_nrs = { input = 1, chat = test_bufnr },
+                },
+                todo_list = { clear = function() end },
+                file_list = { clear = function() end },
+                code_selection = { clear = function() end },
+                diagnostics_list = { clear = function() end },
+                status_animation = {
+                    start = function() end,
+                    stop = function() end,
+                },
+                chat_history = ChatHistory:new(),
+                history_to_send = {},
+                message_writer = {
+                    reset_sender_tracking = function() end,
+                    generate_welcome_header = function()
+                        return ""
+                    end,
+                    write_structural_message = function() end,
+                },
+                _cancel_session = SessionManager._cancel_session,
+                _build_handlers = function()
+                    return {}
+                end,
+                load_acp_session = SessionManager.load_acp_session,
+            } --[[@as agentic.SessionManager]]
+
+            session:load_acp_session("new-session", "title", nil)
+
+            assert.is_nil(session.session_state:get_context_used())
+
+            vim.api.nvim_buf_delete(test_bufnr, { force = true })
         end)
     end)
 

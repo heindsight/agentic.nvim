@@ -34,9 +34,11 @@ local WindowDecoration = {}
 local WINDOW_HEADERS = {
     chat = {
         title = "󰻞 Agentic Chat",
-        suffix = "<S-Tab>: change mode",
     },
-    input = { title = "󰦨 Prompt", suffix = "<C-s>: submit" },
+    input = {
+        title = "󰦨 Prompt",
+        suffix = "submit: <C-s> | change mode: <S-Tab>",
+    },
     code = {
         title = "󰪸 Selected Code Snippets",
         suffix = "d: remove block",
@@ -68,14 +70,83 @@ local default_config = {
 --- @param parts agentic.ui.ChatWidget.HeaderParts
 --- @return string header_text
 local function concat_header_parts(parts)
+    --- @type string[]
     local pieces = { parts.title }
     if parts.context ~= nil then
-        table.insert(pieces, parts.context)
+        pieces[#pieces + 1] = parts.context
     end
     if parts.suffix ~= nil then
-        table.insert(pieces, parts.suffix)
+        pieces[#pieces + 1] = parts.suffix
     end
     return table.concat(pieces, " | ")
+end
+
+--- Builds the rich default header for the chat panel from live session state:
+--- `title | provider - model - mode (used/size) $cost`. The chat panel carries
+--- no key hint; submit/change-mode hints live on the input header.
+--- @param parts agentic.ui.ChatWidget.HeaderParts
+--- @param session_state agentic.acp.SessionState
+--- @return string header_text
+local function build_chat_header(parts, session_state)
+    --- @type string[]
+    local segments = {}
+    --- @param value string|nil
+    local function add_segment(value)
+        if value ~= nil and value ~= "" then
+            segments[#segments + 1] = value
+        end
+    end
+
+    add_segment(session_state:get_provider_name())
+    add_segment(session_state:get_model_name() or "unknown")
+    add_segment(session_state:get_mode_name())
+
+    local header =
+        string.format("%s | %s", parts.title, table.concat(segments, " - "))
+
+    local used = session_state:get_context_used()
+    local size = session_state:get_context_size()
+    if used ~= nil and size ~= nil then
+        header = header .. string.format(" (%s/%s)", used, size)
+    end
+
+    local cost = session_state:get_cost_amount_raw()
+    if cost ~= nil and cost ~= 0 then
+        local amount = session_state:get_cost_amount() or ""
+        local currency = session_state:get_cost_currency()
+        if currency then
+            header = header .. " " .. currency .. " " .. amount
+        else
+            header = header .. " " .. amount
+        end
+    end
+
+    return header
+end
+
+--- Builds the default header from live session state. The chat panel gets the
+--- rich provider/model/mode/usage/cost line. Every other panel (including
+--- input, whose `parts.suffix` carries the mode-aware submit/change-mode
+--- hints), and any panel with a nil session_state, falls back to the plain
+--- title|context|suffix concatenation.
+--- @param window_name string
+--- @param parts agentic.ui.ChatWidget.HeaderParts
+--- @param session_state agentic.acp.SessionState|nil
+--- @return string header_text
+function WindowDecoration._build_default_header(
+    window_name,
+    parts,
+    session_state
+)
+    if session_state == nil then
+        return concat_header_parts(parts)
+    end
+
+    if window_name == "chat" then
+        return build_chat_header(parts, session_state)
+    end
+
+    return concat_header_parts(parts)
 end
 
 --- Gets or initializes headers for a tabpage
@@ -100,13 +171,14 @@ end
 --- Calls a user-supplied function expected to return `string|nil`, capturing
 --- runtime errors and type violations as a formatted message.
 --- @param fn fun(...): any User function to call
---- @param arg any Single argument passed to the function
+--- @param arg any First argument passed to the function
 --- @param label string Identifier (e.g. "custom header"/"buffer_name") for error text
 --- @param name string Window name for error text
+--- @param extra_arg any Second argument passed to the function (session_state, nil allowed)
 --- @return string|nil result The returned string, or nil on error/nil-return
 --- @return string|nil error_message Formatted error, or nil when valid
-local function call_string_fn(fn, arg, label, name)
-    local ok, result = pcall(fn, arg)
+local function call_string_fn(fn, arg, label, name, extra_arg)
+    local ok, result = pcall(fn, arg, extra_arg)
     if not ok then
         return nil,
             string.format(
@@ -135,13 +207,20 @@ end
 --- Returns the header text and an error message if user function failed
 --- @param dynamic_header agentic.ui.ChatWidget.HeaderParts Runtime header parts
 --- @param window_name string Window name for Config.headers lookup and error messages
+--- @param session_state agentic.acp.SessionState|nil Live session state passed as 2nd arg to user header fn
 --- @return string|nil header_text The resolved header text or nil for empty
 --- @return string|nil error_message Error message if user function failed
-local function resolve_header_text(dynamic_header, window_name)
+local function resolve_header_text(dynamic_header, window_name, session_state)
     local user_header = Config.headers and Config.headers[window_name]
-    -- No user customization: use default parts
+    -- No user customization: build the default header (rich for chat/input
+    -- when a session is live, plain concat otherwise)
     if user_header == nil then
-        return concat_header_parts(dynamic_header), nil
+        return WindowDecoration._build_default_header(
+            window_name,
+            dynamic_header,
+            session_state
+        ),
+            nil
     end
 
     -- User function: call it and validate return
@@ -150,7 +229,8 @@ local function resolve_header_text(dynamic_header, window_name)
             user_header,
             dynamic_header,
             "custom header",
-            window_name
+            window_name,
+            session_state
         )
         if err then
             return concat_header_parts(dynamic_header), err
@@ -281,8 +361,14 @@ end
 --- @param window_name string Window name for Config.windows[name].buffer_name lookup
 --- @param header_parts agentic.ui.ChatWidget.HeaderParts Header parts passed to function-type buffer_name
 --- @param fallback string|nil Fallback name (resolved header text) when buffer_name is not set
+--- @param session_state agentic.acp.SessionState|nil Live session state passed as 2nd arg to user buffer_name fn
 --- @return string|nil name
-local function resolve_buffer_name(window_name, header_parts, fallback)
+local function resolve_buffer_name(
+    window_name,
+    header_parts,
+    fallback,
+    session_state
+)
     local win_cfg = Config.windows[window_name]
     local buffer_name = win_cfg and win_cfg.buffer_name
 
@@ -299,7 +385,8 @@ local function resolve_buffer_name(window_name, header_parts, fallback)
             buffer_name,
             header_parts,
             "buffer_name",
-            window_name
+            window_name,
+            session_state
         )
         if err then
             Logger.notify(err)
@@ -326,14 +413,21 @@ end
 --- @param tab_page_id integer Tab page ID for suffix
 --- @param window_name string Window name for Config.windows[name].buffer_name lookup
 --- @param header_parts agentic.ui.ChatWidget.HeaderParts Header parts for function-type buffer_name
+--- @param session_state agentic.acp.SessionState|nil Live session state passed as 2nd arg to user buffer_name fn
 local function set_buffer_name(
     bufnr,
     header_text,
     tab_page_id,
     window_name,
-    header_parts
+    header_parts,
+    session_state
 )
-    local name = resolve_buffer_name(window_name, header_parts, header_text)
+    local name = resolve_buffer_name(
+        window_name,
+        header_parts,
+        header_text,
+        session_state
+    )
     if not name or name == "" then
         return
     end
@@ -357,7 +451,13 @@ end
 --- @param bufnr integer Buffer number - stable reference to derive window and tab context
 --- @param window_name string Name of the window (for Config.headers lookup and error messages)
 --- @param context string|nil Optional context to set in header (e.g., "Mode: chat", "3 files")
-function WindowDecoration.render_header(bufnr, window_name, context)
+--- @param session_state agentic.acp.SessionState|nil Live session state forwarded to chat/input header/buffer_name callbacks as their 2nd arg
+function WindowDecoration.render_header(
+    bufnr,
+    window_name,
+    context,
+    session_state
+)
     vim.schedule(function()
         local winid = vim.fn.bufwinid(bufnr)
         if winid == -1 then
@@ -387,8 +487,16 @@ function WindowDecoration.render_header(bufnr, window_name, context)
             WindowDecoration.set_headers_state(tab_page_id, headers)
         end
 
-        local header_text, err =
-            resolve_header_text(dynamic_header, window_name)
+        local callback_session_state = nil
+        if window_name == "chat" or window_name == "input" then
+            callback_session_state = session_state
+        end
+
+        local header_text, err = resolve_header_text(
+            dynamic_header,
+            window_name,
+            callback_session_state
+        )
 
         if err then
             Logger.notify(err)
@@ -397,12 +505,15 @@ function WindowDecoration.render_header(bufnr, window_name, context)
         local text = (header_text and header_text ~= "") and header_text or ""
 
         set_winbar(winid, text)
+        -- Buffer name mirrors the header title, not the rich winbar text:
+        -- the rich format embeds "/" and "$" which corrupt buffer basenames.
         set_buffer_name(
             bufnr,
-            header_text,
+            concat_header_parts(dynamic_header),
             tab_page_id,
             window_name,
-            dynamic_header
+            dynamic_header,
+            callback_session_state
         )
     end)
 end

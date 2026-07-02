@@ -130,12 +130,14 @@ function AgentConfigOptions:set_options(configOptions)
         local raw = type(option.category) == "string" and option.category or ""
         local cat = CATEGORY_ALIASES[raw] or raw
 
+        local stored_option = vim.deepcopy(option)
+
         if cat == "mode" then
-            self.mode = option
+            self.mode = stored_option
         elseif cat == "model" then
-            self.model = option
+            self.model = stored_option
         elseif cat == "thought_level" then
-            self.thought_level = option
+            self.thought_level = stored_option
         elseif cat:sub(1, 1) ~= "_" then
             Logger.debug("Unknown config option", option)
         end
@@ -174,9 +176,7 @@ function AgentConfigOptions:set_initial_mode(target_mode)
     end
 
     if not found then
-        local current = self.mode and self.mode.currentValue
-            or self.legacy_agent_modes.current_mode_id
-            or "unknown"
+        local current = self:get_mode_id() or "unknown"
         Logger.notify(
             string.format(
                 "Configured default_mode ‘%s’ not available."
@@ -223,9 +223,7 @@ function AgentConfigOptions:set_initial_model(target_model, on_done)
     end
 
     if not found then
-        local current = self.model and self.model.currentValue
-            or self.legacy_agent_models.current_model_id
-            or "unknown"
+        local current = self:get_model_id() or "unknown"
         Logger.notify(
             string.format(
                 "Configured initial_model '%s' not available."
@@ -267,6 +265,20 @@ local function getter(target, value)
     end
 
     return nil
+end
+
+--- Current mode id, config option first, legacy state as fallback.
+--- @return string|nil mode_id
+function AgentConfigOptions:get_mode_id()
+    return self.mode and self.mode.currentValue
+        or self.legacy_agent_modes.current_mode_id
+end
+
+--- Current model id, config option first, legacy state as fallback.
+--- @return string|nil model_id
+function AgentConfigOptions:get_model_id()
+    return self.model and self.model.currentValue
+        or self.legacy_agent_models.current_model_id
 end
 
 --- @param mode_value string
@@ -526,6 +538,9 @@ function AgentConfigOptions:handle_mode_change(mode_id, is_legacy)
         function(result)
             -- keep legacy state in sync so legacy selectors reflect the change
             self.legacy_agent_modes.current_mode_id = mode_id
+            if not is_legacy and self.mode then
+                self.mode.currentValue = mode_id
+            end
 
             if result and type(result.configOptions) == "table" then
                 Logger.debug("received result after setting mode")
@@ -573,12 +588,15 @@ function AgentConfigOptions:handle_model_change(model_id, is_legacy, on_done)
         function(result)
             -- keep legacy state in sync so legacy selectors reflect the change
             self.legacy_agent_models.current_model_id = model_id
+            if not is_legacy and self.model then
+                self.model.currentValue = model_id
+            end
 
             if result and type(result.configOptions) == "table" then
                 Logger.debug("received result after setting model")
                 self:set_options(result.configOptions)
-                self.callbacks.on_config_options_applied()
             end
+            self.callbacks.on_config_options_applied()
 
             Logger.notify(
                 "Model changed to: " .. model_id,
@@ -626,11 +644,15 @@ function AgentConfigOptions:handle_thought_level_change(value)
         "thought effort level",
         value,
         function(result)
+            if self.thought_level then
+                self.thought_level.currentValue = value
+            end
+
             if result and type(result.configOptions) == "table" then
                 Logger.debug("received result after setting thought_level")
                 self:set_options(result.configOptions)
-                self.callbacks.on_config_options_applied()
             end
+            self.callbacks.on_config_options_applied()
 
             Logger.notify(
                 "Thought effort level changed to: " .. value,

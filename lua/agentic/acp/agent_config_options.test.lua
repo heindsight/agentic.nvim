@@ -547,6 +547,76 @@ describe("agentic.acp.AgentConfigOptions", function()
         )
     end)
 
+    describe("successful changes without returned configOptions", function()
+        --- @type TestStub
+        local notify_stub
+
+        before_each(function()
+            notify_stub = spy.stub(require("agentic.utils.logger"), "notify")
+        end)
+
+        after_each(function()
+            notify_stub:revert()
+        end)
+
+        it("updates modern mode currentValue", function()
+            --- @type any
+            local agent = {
+                set_config_option = function(_self, _sid, _cid, _val, cb)
+                    cb({}, nil)
+                end,
+            }
+            local config = make_with_agent(agent, { id = "s1" })
+            config:set_options({ mode_option })
+
+            config:handle_mode_change("plan", false)
+
+            assert.equal("plan", config:get_mode_id())
+        end)
+
+        it("updates modern model currentValue and refreshes headers", function()
+            local applied = spy.new(function() end)
+            --- @type any
+            local agent = {
+                set_config_option = function(_self, _sid, _cid, _val, cb)
+                    cb({}, nil)
+                end,
+            }
+            local config =
+                make_with_agent(agent, { id = "s1" }, applied --[[@as fun()]])
+            config:set_options({ model_option })
+
+            config:handle_model_change("claude-opus", false)
+
+            assert.equal("claude-opus", config:get_model_id())
+            assert.equal(1, applied.call_count)
+        end)
+
+        it(
+            "updates thought_level currentValue and refreshes headers",
+            function()
+                local applied = spy.new(function() end)
+                --- @type any
+                local agent = {
+                    set_config_option = function(_self, _sid, _cid, _val, cb)
+                        cb({}, nil)
+                    end,
+                }
+                local config = make_with_agent(
+                    agent,
+                    { id = "s1" },
+                    applied --[[@as fun()]]
+                )
+                config:set_options({ multi_thought })
+
+                config:handle_thought_level_change("max")
+
+                assert.equal("max", config.thought_level.currentValue)
+                assert.equal(1, applied.call_count)
+            end
+        )
+    end)
+
     --- _show_mode_selector and _show_model_selector share legacy-fallback
     --- behavior. The selectors take no handler — they route the pick to
     --- `self:handle_*_change` internally, so a fake agent observes the
@@ -732,6 +802,72 @@ describe("agentic.acp.AgentConfigOptions", function()
                     notify_stub:revert()
                 end
             )
+        end)
+    end
+
+    --- get_model_id / get_mode_id resolve the current id across config options
+    --- and legacy state in ONE place: config currentValue wins, legacy id is
+    --- the fallback, nil when neither source is populated.
+    for _, case in ipairs({
+        {
+            method = "get_model_id",
+            option = model_option,
+            config_id = "claude-sonnet",
+            set_legacy = function(target)
+                target.legacy_agent_models:set_models({
+                    availableModels = {
+                        {
+                            modelId = "legacy-opus",
+                            name = "Legacy",
+                            description = "",
+                        },
+                    },
+                    currentModelId = "legacy-opus",
+                })
+            end,
+            legacy_id = "legacy-opus",
+        },
+        {
+            method = "get_mode_id",
+            option = mode_option,
+            config_id = "normal",
+            set_legacy = function(target)
+                target.legacy_agent_modes:set_modes({
+                    availableModes = {
+                        {
+                            id = "legacy-plan",
+                            name = "Legacy",
+                            description = "",
+                        },
+                    },
+                    currentModeId = "legacy-plan",
+                })
+            end,
+            legacy_id = "legacy-plan",
+        },
+    }) do
+        describe(case.method, function()
+            it("returns config currentValue when config option set", function()
+                config_options:set_options({ case.option })
+
+                assert.equal(
+                    case.config_id,
+                    config_options[case.method](config_options)
+                )
+            end)
+
+            it("returns legacy current id when only legacy set", function()
+                case.set_legacy(config_options)
+
+                assert.equal(
+                    case.legacy_id,
+                    config_options[case.method](config_options)
+                )
+            end)
+
+            it("returns nil when neither source is populated", function()
+                assert.is_nil(config_options[case.method](config_options))
+            end)
         end)
     end
 
