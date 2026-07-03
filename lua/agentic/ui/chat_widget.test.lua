@@ -2,6 +2,7 @@ local assert = require("tests.helpers.assert")
 local spy = require("tests.helpers.spy")
 local Config = require("agentic.config")
 local Logger = require("agentic.utils.logger")
+local WindowDecoration = require("agentic.ui.window_decoration")
 
 describe("agentic.ui.ChatWidget", function()
     --- @type agentic.ui.ChatWidget
@@ -951,6 +952,99 @@ describe("agentic.ui.ChatWidget", function()
             assert.is_false(vim.api.nvim_win_is_valid(first_hidden))
             assert.is_not_nil(widget._hidden_chat_winid)
             assert.is_true(vim.api.nvim_win_is_valid(widget._hidden_chat_winid))
+        end)
+    end)
+
+    describe("input header suffix", function()
+        local tab_page_id
+        local widget
+
+        before_each(function()
+            vim.cmd("tabnew")
+            tab_page_id = vim.api.nvim_get_current_tabpage()
+            widget = ChatWidget:new(
+                tab_page_id,
+                spy.new(function() end) --[[@as function]]
+            )
+        end)
+
+        after_each(function()
+            pcall(function()
+                widget:destroy()
+            end)
+            pcall(function()
+                vim.cmd("tabclose")
+            end)
+        end)
+
+        it("seeds normal-mode hints at construction time", function()
+            local headers = WindowDecoration.get_headers_state(tab_page_id)
+            assert.equal(
+                "submit: <CR> | change mode: <S-Tab>",
+                headers.input.suffix
+            )
+        end)
+    end)
+
+    describe("_render_dynamic_headers", function()
+        local tab_page_id
+        local widget
+        local original_headers
+
+        before_each(function()
+            original_headers = Config.headers
+            vim.cmd("tabnew")
+            tab_page_id = vim.api.nvim_get_current_tabpage()
+            widget = ChatWidget:new(
+                tab_page_id,
+                spy.new(function() end) --[[@as function]]
+            )
+        end)
+
+        after_each(function()
+            Config.headers = original_headers
+            pcall(function()
+                widget:destroy()
+            end)
+            pcall(function()
+                vim.cmd("tabclose")
+            end)
+        end)
+
+        it(
+            "refreshes chat and input with default (empty) Config.headers",
+            function()
+                Config.headers = {}
+                local render_spy = spy.new(function() end)
+                widget.render_header = render_spy
+
+                widget:_render_dynamic_headers()
+
+                local panels = {}
+                for _, call in ipairs(render_spy.calls) do
+                    panels[call[2]] = true
+                end
+                assert.is_true(panels.chat)
+                assert.is_true(panels.input)
+            end
+        )
+
+        it("refreshes a user-function panel too", function()
+            Config.headers = {
+                files = function(parts)
+                    return parts.title
+                end,
+            }
+            local render_spy = spy.new(function() end)
+            widget.render_header = render_spy
+
+            widget:_render_dynamic_headers()
+
+            local panels = {}
+            for _, call in ipairs(render_spy.calls) do
+                panels[call[2]] = true
+            end
+            assert.is_true(panels.files)
         end)
     end)
 end)

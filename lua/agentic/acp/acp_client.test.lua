@@ -491,5 +491,158 @@ describe("ACPClient", function()
                 ---@diagnostic enable: invisible, assign-type-mismatch
             end)
         end)
+
+        it("uses rawInput command as title and description as body", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = {
+                    command = "rm demo.md",
+                    description = "Remove demo.md file",
+                },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal("rm demo.md", message.argument)
+            assert.same({ "Remove demo.md file" }, message.body)
+        end)
+
+        it("uses rawInput command as title with no description body", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = { command = "ls -la" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal("ls -la", message.argument)
+            assert.equal(nil, message.body)
+        end)
+
+        it("falls back to rawInput JSON for empty command", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = { command = "", other = "value here" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal("bash", message.argument)
+            assert.is_true(type(message.body) == "table")
+            assert.is_true(#message.body > 1)
+        end)
+
+        it("ignores empty description, sets only command title", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = { command = "ls -la", description = "" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal("ls -la", message.argument)
+            assert.equal(nil, message.body)
+        end)
+
+        it("falls back to rawInput JSON when no command field", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = { foo = "bar baz" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.is_true(type(message.body) == "table")
+            assert.is_true(#message.body > 1)
+            local joined = table.concat(message.body, "\n")
+            assert.is_true(joined:find('"foo": "bar baz"') ~= nil)
+        end)
+
+        it("does not inject body for empty rawInput", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "bash",
+                rawInput = vim.empty_dict(),
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal(nil, message.body)
+        end)
+
+        it("keeps content-derived body over rawInput JSON", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "execute",
+                title = "ls",
+                rawInput = { command = "ls" },
+                content = {
+                    {
+                        type = "content",
+                        content = { type = "text", text = "List files" },
+                    },
+                },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.same({ "List files" }, message.body)
+            local joined = table.concat(message.body, "\n")
+            assert.is_true(joined:find('"command"') == nil)
+        end)
+
+        it("does not inject body for read kind", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "read",
+                rawInput = { file_path = "/tmp/x" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.equal(nil, message.body)
+        end)
+
+        it("keeps edit diff and skips rawInput body injection", function()
+            local client = create_ready_client()
+
+            ---@diagnostic disable: invisible, assign-type-mismatch
+            local message = client:__build_tool_call_message({
+                toolCallId = "tc-x",
+                kind = "edit",
+                rawInput = { newString = "a", oldString = "b" },
+            })
+            ---@diagnostic enable: invisible, assign-type-mismatch
+
+            assert.is_true(message.diff ~= nil)
+            assert.equal(nil, message.body)
+        end)
     end)
 end)
