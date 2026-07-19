@@ -30,6 +30,9 @@ describe("ACPClient", function()
     --- @type fun(message: agentic.acp.ResponseRaw)|nil
     local captured_on_message
 
+    --- @type agentic.acp.InitializeParams|nil
+    local captured_initialize_params
+
     local PROMPT_CAPS =
         { image = false, audio = false, embeddedContext = false }
 
@@ -71,6 +74,7 @@ describe("ACPClient", function()
         transport_send_stub:invokes(function(_self, data)
             local decoded = vim.json.decode(data)
             if decoded.method == "initialize" and captured_on_message then
+                captured_initialize_params = decoded.params
                 captured_on_message({
                     jsonrpc = "2.0",
                     method = "initialize",
@@ -118,6 +122,7 @@ describe("ACPClient", function()
     before_each(function()
         package.loaded["agentic.acp.acp_client"] = nil
         package.loaded["agentic.acp.acp_transport"] = nil
+        captured_initialize_params = nil
 
         local Logger = require("agentic.utils.logger")
         logger_debug_stub = spy.stub(Logger, "debug")
@@ -149,6 +154,28 @@ describe("ACPClient", function()
         transport_start_stub:revert()
         transport_stop_stub:revert()
         create_transport_stub:revert()
+    end)
+
+    describe("initialize", function()
+        it("advertises boolean session config options as an object", function()
+            assert.equal("[]", vim.json.encode({}))
+            create_ready_client()
+
+            assert.is_not_nil(captured_initialize_params)
+            --- @cast captured_initialize_params agentic.acp.InitializeParams
+            assert.is_not_nil(
+                captured_initialize_params.clientCapabilities.session
+            )
+
+            local config_options =
+                captured_initialize_params.clientCapabilities.session.configOptions
+            assert.is_not_nil(config_options)
+            --- @cast config_options agentic.acp.SessionConfigOptionsCapabilities
+            assert.is_not_nil(config_options.boolean)
+
+            local encoded = vim.json.encode(captured_initialize_params)
+            assert.is_not_nil(encoded:find('"boolean":{}', 1, true))
+        end)
     end)
 
     describe("list_sessions", function()
@@ -275,6 +302,77 @@ describe("ACPClient", function()
             assert.has_no_errors(function()
                 client:load_session("sid-1", "/tmp", {}, NOOP_HANDLERS)
             end)
+        end)
+    end)
+
+    describe("set_config_option", function()
+        it("sends select values without a type", function()
+            local client = create_ready_client()
+            --- @diagnostic disable-next-line: invisible
+            local send_request_stub = spy.stub(client, "_send_request")
+
+            client:set_config_option({
+                sessionId = "s1",
+                configId = "model",
+                value = "opus",
+            }, function() end)
+
+            local params = send_request_stub.calls[1][3]
+            assert.equal(
+                "session/set_config_option",
+                send_request_stub.calls[1][2]
+            )
+            assert.same({
+                sessionId = "s1",
+                configId = "model",
+                value = "opus",
+            }, params)
+            assert.is_nil(params.type)
+        end)
+
+        it("sends boolean true with the boolean type", function()
+            local client = create_ready_client()
+            --- @diagnostic disable-next-line: invisible
+            local send_request_stub = spy.stub(client, "_send_request")
+
+            client:set_config_option({
+                sessionId = "s1",
+                configId = "fast",
+                type = "boolean",
+                value = true,
+            }, function() end)
+
+            assert.equal(
+                "session/set_config_option",
+                send_request_stub.calls[1][2]
+            )
+            assert.same({
+                sessionId = "s1",
+                configId = "fast",
+                type = "boolean",
+                value = true,
+            }, send_request_stub.calls[1][3])
+        end)
+
+        it("sends boolean false with the boolean type", function()
+            local client = create_ready_client()
+            --- @diagnostic disable-next-line: invisible
+            local send_request_stub = spy.stub(client, "_send_request")
+
+            client:set_config_option({
+                sessionId = "s1",
+                configId = "fast",
+                type = "boolean",
+                value = false,
+            }, function() end)
+
+            local params = send_request_stub.calls[1][3]
+            assert.equal(
+                "session/set_config_option",
+                send_request_stub.calls[1][2]
+            )
+            assert.is_false(params.value)
+            assert.equal("boolean", params.type)
         end)
     end)
 
