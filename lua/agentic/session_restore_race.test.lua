@@ -71,7 +71,7 @@ describe("race: stale create_session after load_acp_session", function()
                 provider_config = { name = "test-provider" },
                 agent_info = nil,
 
-                create_session = function(_, _handlers, cb)
+                create_session = function(_, _cwd, _handlers, cb)
                     create_cb_ref.cb = cb -- capture; do NOT call yet
                 end,
 
