@@ -223,6 +223,7 @@ end
 function SessionManager:_handle_connection_error()
     self._connection_error = true
     self._session_ready_callbacks = {}
+    self.is_generating = false
     self.status_animation:stop()
     self.message_writer:write_message(
         ACPPayloads.generate_agent_message(
@@ -726,6 +727,17 @@ function SessionManager:new_session(opts)
 
         Hooks.invoke("on_create_session_response", hook_data)
 
+        -- A session restore was initiated after this create_session was sent.
+        -- Race A: load still in-flight → _is_restoring_session is true.
+        -- Race B: load already completed → session_id is already set.
+        -- Check staleness first so a failed stale callback can't wipe restored state.
+        if self._is_restoring_session or self.session_id ~= nil then
+            if response and response.sessionId then
+                self.agent:cancel_session(response.sessionId)
+            end
+            return
+        end
+
         if err or not response then
             -- no log here, already logged in create_session
             self.session_id = nil
@@ -898,7 +910,7 @@ function SessionManager:add_buffer_diagnostics_to_context(bufnr)
     return self.diagnostics_list:add_many(diagnostics)
 end
 
---- @param new_config_options agentic.acp.ConfigOption[]
+--- @param new_config_options agentic.acp.AnyConfigOption[]
 function SessionManager:_handle_new_config_options(new_config_options)
     self.config_options:set_options(new_config_options)
     local mode_id = self.config_options:get_mode_id()

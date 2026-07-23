@@ -73,6 +73,11 @@ function ACPClient:new(config, on_ready)
                 writeTextFile = false,
             },
             terminal = false,
+            session = {
+                configOptions = {
+                    boolean = vim.empty_dict(),
+                },
+            },
         },
         auth_methods = {},
         ready_listeners = {},
@@ -779,22 +784,9 @@ function ACPClient:set_mode(session_id, mode_id, callback)
 end
 
 --- Set a config option value for a session
---- @param session_id string
---- @param config_id string
---- @param config_value string
+--- @param params agentic.acp.SetConfigOptionParams
 --- @param callback fun(result: table|nil, err: agentic.acp.ACPError|nil)
-function ACPClient:set_config_option(
-    session_id,
-    config_id,
-    config_value,
-    callback
-)
-    local params = {
-        sessionId = session_id,
-        configId = config_id,
-        value = config_value,
-    }
-
+function ACPClient:set_config_option(params, callback)
     self:_send_request("session/set_config_option", params, callback)
 end
 
