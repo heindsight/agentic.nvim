@@ -13,6 +13,7 @@ local WidgetLayout = require("agentic.ui.widget_layout")
 --- @field title string
 --- @field context? string
 --- @field suffix? string
+--- @field cwd? string Session CWD of the owning session; not printed by the default header
 
 --- @alias agentic.ui.ChatWidget.BufNrs table<agentic.ui.ChatWidget.PanelNames, integer>
 --- @alias agentic.ui.ChatWidget.WinNrs table<agentic.ui.ChatWidget.PanelNames, integer|nil>
@@ -49,6 +50,7 @@ local WidgetLayout = require("agentic.ui.widget_layout")
 --- @field _header_refresh_scheduled boolean
 --- @field headers agentic.ui.ChatWidget.Headers Mutated in place by `WindowDecoration.get_headers_state` callers
 --- @field session_state? agentic.acp.SessionState Set by SessionManager
+--- @field cwd? string Session CWD, set by SessionManager
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
 
@@ -818,14 +820,19 @@ function ChatWidget:_is_widget_buffer(bufnr)
     return false
 end
 
---- First readable oldfile under the cwd, as a bufnr.
+--- First readable oldfile under the Session CWD, as a bufnr.
+--- @param cwd string|nil
 --- @return integer|nil bufnr
-local function first_oldfile_bufnr()
-    local cwd = vim.fn.getcwd()
+local function first_oldfile_bufnr(cwd)
+    if not cwd then
+        return nil
+    end
+
+    local prefix = cwd:gsub("[/\\]+$", "") .. "/"
 
     for _, filepath in ipairs(vim.v.oldfiles or {}) do
         if
-            vim.startswith(filepath, cwd)
+            vim.startswith(filepath, prefix)
             and vim.fn.filereadable(filepath) == 1
         then
             local bufnr = vim.fn.bufnr(filepath)
@@ -853,7 +860,7 @@ local SPLIT_CMD_BY_POSITION = {
 function ChatWidget:open_editor_window(bufnr)
     -- A scratch buffer, not the alternate buffer (`#`), which could be a widget buffer.
     bufnr = bufnr
-        or first_oldfile_bufnr()
+        or first_oldfile_bufnr(self.cwd)
         or vim.api.nvim_create_buf(false, true)
 
     local split_cmd = SPLIT_CMD_BY_POSITION[self.current_position]

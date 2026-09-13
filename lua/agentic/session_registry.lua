@@ -6,6 +6,7 @@ local AgentInstance = require("agentic.acp.agent_instance")
 local BufHelpers = require("agentic.utils.buf_helpers")
 local SessionManager = require("agentic.session_manager")
 local SessionStarter = require("agentic.session_starter")
+local SessionCwd = require("agentic.session_cwd")
 
 local KEEP_CURRENT_SESSION = "Keep current session in the background"
 local DESTROY_CURRENT_SESSION = "Destroy current session"
@@ -63,27 +64,36 @@ function SessionRegistry.create(provider_name, start_spec, agent)
         return nil
     end
 
-    local ok, session = pcall(function()
-        return SessionManager:new(agent, provider_name, function(current)
-            SessionRegistry.choose_session_lifecycle(
-                current,
-                "New session:",
-                function(destroy_source)
-                    --- @type agentic.SessionReplacementOpts
-                    local opts = { agent = current.agent }
-                    if not destroy_source then
-                        opts.retain_source = true
-                    end
+    local spec = start_spec or { kind = "new" }
+    -- Every creation path funnels through here: one resolver, one fallback.
+    spec.cwd = SessionCwd.resolve(spec.cwd, vim.api.nvim_get_current_buf())
 
-                    SessionRegistry.replace(
-                        current,
-                        current.provider_name,
-                        { kind = "new" },
-                        opts
-                    )
-                end
-            )
-        end)
+    local ok, session = pcall(function()
+        return SessionManager:new(
+            agent,
+            provider_name,
+            spec.cwd,
+            function(current)
+                SessionRegistry.choose_session_lifecycle(
+                    current,
+                    "New session:",
+                    function(destroy_source)
+                        --- @type agentic.SessionReplacementOpts
+                        local opts = { agent = current.agent }
+                        if not destroy_source then
+                            opts.retain_source = true
+                        end
+
+                        SessionRegistry.replace(
+                            current,
+                            current.provider_name,
+                            { kind = "new" },
+                            opts
+                        )
+                    end
+                )
+            end
+        )
     end)
 
     if not ok then
@@ -107,7 +117,6 @@ function SessionRegistry.create(provider_name, start_spec, agent)
         end
     end)
     local attempt
-    local spec = start_spec or { kind = "new" }
     attempt = SessionStarter.start(agent, spec, function(is_replaying)
         return session:prepare_start(spec, is_replaying)
     end, function(result, err)
@@ -189,6 +198,11 @@ function SessionRegistry.replace(source, provider_name, start_spec, opts)
     local agent = opts.agent or AgentInstance.get_instance(provider_name)
     if not agent then
         return nil
+    end
+
+    -- A replacement continues the source's project (ADR 0009).
+    if start_spec.cwd == nil and source then
+        start_spec.cwd = source.cwd
     end
 
     if start_spec.kind == "load" then
@@ -435,15 +449,33 @@ end
 --- Creates an additional session after resolving the current one's lifecycle.
 --- @param on_created fun(session: agentic.SessionManager)
 --- @param provider_name agentic.UserConfig.ProviderName|nil
+--- @param cwd string|nil Explicit Session CWD override
 function SessionRegistry.create_with_current_session_guard(
     on_created,
-    provider_name
+    provider_name,
+    cwd
 )
     local current = SessionRegistry.current()
 
+    -- Resolved BEFORE the lifecycle picker: the acting buffer is the one the
+    -- keybinding ran in, not whatever is current once `vim.ui.select` returns.
+    local acting_bufnr = vim.api.nvim_get_current_buf()
+    if cwd == nil then
+        local WidgetRegistry = require("agentic.ui.widget_registry")
+        local widget = WidgetRegistry.get(acting_bufnr)
+        local owner = widget
+            and widget.session_key
+            and SessionRegistry.get(widget.session_key)
+        cwd = owner and owner.cwd or nil
+    end
+    local session_cwd = SessionCwd.resolve(cwd, acting_bufnr)
+
     --- @param destroy_current boolean
     local function create(destroy_current)
-        local session = SessionRegistry.create(provider_name, { kind = "new" })
+        local session = SessionRegistry.create(
+            provider_name,
+            { kind = "new", cwd = session_cwd }
+        )
 
         if not session then
             return

@@ -12,7 +12,12 @@ local function new_test_manager()
     local Config = require("agentic.config")
     local AgentInstance = require("agentic.acp.agent_instance")
     local agent = AgentInstance.get_instance(Config.provider)
-    return SessionManager:new(agent, Config.provider, function() end)
+    return SessionManager:new(
+        agent,
+        Config.provider,
+        vim.fn.getcwd(),
+        function() end
+    )
 end
 
 --- @param manager agentic.SessionManager
@@ -302,7 +307,7 @@ describe("agentic.SessionManager", function()
                         on_ready(fake)
                     end)
                 end
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -420,7 +425,7 @@ describe("agentic.SessionManager", function()
                         end
                     end)
                 end
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb(create_response, create_error)
                 end
                 function fake:cancel_session() end
@@ -564,7 +569,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -674,7 +679,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -764,6 +769,7 @@ describe("agentic.SessionManager", function()
             return {
                 session_id = "session-1",
                 session_key = 3,
+                cwd = "/proj",
                 widget = {
                     get_visible_tab_id = function()
                         return 42
@@ -804,6 +810,7 @@ describe("agentic.SessionManager", function()
             local data = hook_spy.calls[1][1]
             assert.equal("session-1", data.session_id)
             assert.equal(42, data.tab_page_id)
+            assert.equal("/proj", data.cwd)
             assert.equal("agent_message_chunk", data.update.sessionUpdate)
         end)
 
@@ -869,7 +876,7 @@ describe("agentic.SessionManager", function()
                     default_mode = nil,
                 }
                 fake.agent_info = {}
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -1112,6 +1119,7 @@ describe("agentic.SessionManager", function()
             return {
                 session_id = "session-1",
                 session_key = 3,
+                cwd = "/proj",
                 widget = {
                     get_visible_tab_id = function()
                         return 42
@@ -1462,6 +1470,7 @@ describe("agentic.SessionManager", function()
                 assert.equal("session-1", data.session_id)
                 assert.equal(3, data.session_key)
                 assert.equal(42, data.tab_page_id)
+                assert.equal("/proj", data.cwd)
                 assert.equal(test_bufnr, data.bufnr)
             end
         )
@@ -1796,7 +1805,7 @@ describe("agentic.SessionManager", function()
                         on_ready(fake)
                     end)
                 end
-                function fake:create_session(_h, cb)
+                function fake:create_session(_cwd, _h, cb)
                     cb({
                         sessionId = "test-session",
                         configOptions = nil,
@@ -1863,6 +1872,7 @@ describe("agentic.SessionManager", function()
             session = {
                 session_id = "test-session-123",
                 session_key = 3,
+                cwd = "/proj",
                 widget = {
                     get_visible_tab_id = function()
                         return 1
@@ -1927,6 +1937,7 @@ describe("agentic.SessionManager", function()
             assert.equal("test-session-123", data.session_id)
             assert.equal(3, data.session_key)
             assert.equal(1, data.tab_page_id)
+            assert.equal("/proj", data.cwd)
             assert.equal(mock_request, data.request)
         end)
 
@@ -2228,6 +2239,7 @@ describe("agentic.SessionManager", function()
             return {
                 session_id = "session-1",
                 session_key = 7,
+                cwd = "/proj",
                 is_generating = false,
                 _connection_error = false,
                 _is_restoring_session = false,
@@ -2319,6 +2331,7 @@ describe("agentic.SessionManager", function()
             assert.spy(hook_spy).was.called(1)
             assert.equal(7, hook_spy.calls[1][1].session_key)
             assert.equal(11, hook_spy.calls[1][1].tab_page_id)
+            assert.equal("/proj", hook_spy.calls[1][1].cwd)
         end)
 
         -- The completion payload is built inside a `vim.schedule`, so a tabpage
@@ -2342,6 +2355,7 @@ describe("agentic.SessionManager", function()
             local data = complete_response()
             assert.equal(22, data.tab_page_id)
             assert.equal(7, data.session_key)
+            assert.equal("/proj", data.cwd)
         end)
 
         it("drops queued response completion after destroy", function()
@@ -2530,7 +2544,7 @@ describe("agentic.SessionManager one-shot lifecycle", function()
             self.failure_callback = on_failure
         end
 
-        function agent:create_session(_handlers, callback)
+        function agent:create_session(_cwd, _handlers, callback)
             self.create_calls = self.create_calls + 1
             if self.create_error then
                 callback(nil, self.create_error)
@@ -2560,6 +2574,7 @@ describe("agentic.SessionManager one-shot lifecycle", function()
         local manager = SessionManager:new(
             agent,
             "claude-acp",
+            vim.fn.getcwd(),
             on_new_session or function() end
         )
         managers[#managers + 1] = manager
@@ -2791,6 +2806,7 @@ describe("agentic.SessionManager one-shot lifecycle", function()
         local data = hook_spy.calls[1][1]
         assert.is_nil(data.response)
         assert.equal("create failed", data.err.message)
+        assert.equal(vim.fn.getcwd(), data.cwd)
     end)
 
     it("builds the create hook payload outside a fast event", function()
@@ -2810,7 +2826,7 @@ describe("agentic.SessionManager one-shot lifecycle", function()
             function agent:when_ready(on_ready)
                 on_ready(self)
             end
-            function agent:create_session(_handlers, callback)
+            function agent:create_session(_cwd, _handlers, callback)
                 local timer = vim.uv.new_timer()
                 timer:start(0, 0, function()
                     timer:close()

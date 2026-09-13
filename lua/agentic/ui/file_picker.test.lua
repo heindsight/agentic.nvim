@@ -50,7 +50,10 @@ describe("FilePicker:scan_files", function()
         original_cmd_rg = FilePicker.CMD_RG[1]
         original_cmd_fd = FilePicker.CMD_FD[1]
         original_cmd_git = FilePicker.CMD_GIT[1]
-        picker = FilePicker:new(vim.api.nvim_create_buf(false, true)) --[[@as agentic.ui.FilePicker]]
+        picker = FilePicker:new(
+            vim.api.nvim_create_buf(false, true),
+            vim.fn.getcwd()
+        ) --[[@as agentic.ui.FilePicker]]
     end)
 
     after_each(function()
@@ -70,15 +73,19 @@ describe("FilePicker:scan_files", function()
             FilePicker.CMD_FD[1] = "echo"
             FilePicker.CMD_GIT[1] = "echo"
 
-            system_stub = spy.stub(vim.fn, "system")
-            system_stub:invokes(function(_cmd)
+            system_stub = spy.stub(vim, "system")
+            system_stub:invokes(function(_cmd, _opts)
                 -- First call returns empty (simulates failure)
                 -- Second call returns files (simulates success)
-                if system_stub.call_count == 1 then
-                    return ""
-                else
-                    return "file1.lua\nfile2.lua\nfile3.lua\n"
+                local stdout = ""
+                if system_stub.call_count > 1 then
+                    stdout = "file1.lua\nfile2.lua\nfile3.lua\n"
                 end
+                return {
+                    wait = function()
+                        return { code = 0, stdout = stdout }
+                    end,
+                }
             end)
 
             local files = picker:scan_files()
@@ -86,6 +93,31 @@ describe("FilePicker:scan_files", function()
             -- Should have called system exactly 2 times (first fails, second succeeds)
             assert.equal(2, system_stub.call_count)
             assert.equal(3, #files)
+        end)
+
+        it("runs every scan command in the Session CWD", function()
+            FilePicker.CMD_RG[1] = "echo"
+            FilePicker.CMD_FD[1] = "echo"
+            FilePicker.CMD_GIT[1] = "nonexistent_git"
+            local project_picker =
+                FilePicker:new(vim.api.nvim_create_buf(false, true), "/tmp") --[[@as agentic.ui.FilePicker]]
+
+            system_stub = spy.stub(vim, "system")
+            system_stub:invokes(function(_cmd, _opts)
+                return {
+                    wait = function()
+                        return { code = 0, stdout = "a.lua\nsub/b.lua\n" }
+                    end,
+                }
+            end)
+
+            local files = project_picker:scan_files()
+
+            assert.equal("/tmp", system_stub.calls[1][2].cwd)
+            assert.same({ "@a.lua", "@sub/b.lua" }, {
+                files[1].word,
+                files[2].word,
+            })
         end)
     end)
 
@@ -153,6 +185,50 @@ describe("FilePicker:scan_files", function()
 
             assert.are.equal(#words_rg, #words_fd)
             assert.are.equal(#words_fd, #words_git)
+        end)
+
+        --- A throwaway project outside the Neovim cwd with two files.
+        --- @return string project_dir
+        local function make_project_dir()
+            local project_dir = vim.fn.tempname()
+            vim.fn.mkdir(project_dir .. "/sub", "p")
+            vim.fn.writefile({ "" }, project_dir .. "/a.lua")
+            vim.fn.writefile({ "" }, project_dir .. "/sub/b.lua")
+            return project_dir
+        end
+
+        it("lists files under the Session CWD, relative to it", function()
+            local project_dir = make_project_dir()
+            FilePicker.CMD_RG[1] = original_cmd_rg
+            FilePicker.CMD_FD[1] = "nonexistent_fd"
+            FilePicker.CMD_GIT[1] = "nonexistent_git"
+            local project_picker = FilePicker:new(
+                vim.api.nvim_create_buf(false, true),
+                project_dir
+            ) --[[@as agentic.ui.FilePicker]]
+
+            local words = vim.tbl_map(function(f)
+                return f.word
+            end, project_picker:scan_files())
+
+            assert.same({ "@a.lua", "@sub/b.lua" }, words)
+        end)
+
+        it("globs under the Session CWD when all commands fail", function()
+            local project_dir = make_project_dir()
+            FilePicker.CMD_RG[1] = "nonexistent_rg"
+            FilePicker.CMD_FD[1] = "nonexistent_fd"
+            FilePicker.CMD_GIT[1] = "nonexistent_git"
+            local project_picker = FilePicker:new(
+                vim.api.nvim_create_buf(false, true),
+                project_dir
+            ) --[[@as agentic.ui.FilePicker]]
+
+            local words = vim.tbl_map(function(f)
+                return f.word
+            end, project_picker:scan_files())
+
+            assert.same({ "@a.lua", "@sub/b.lua" }, words)
         end)
 
         it("should use glob fallback when all commands fail", function()
@@ -249,7 +325,7 @@ describe("FilePicker auto_trigger", function()
     it("registers TextChangedI autocmd when auto_trigger is true", function()
         Config.file_picker.auto_trigger = true
         local buf = vim.api.nvim_create_buf(false, true)
-        FilePicker:new(buf)
+        FilePicker:new(buf, vim.fn.getcwd())
         assert.equal(1, textchangedi_call_count())
         vim.api.nvim_buf_delete(buf, { force = true })
     end)
@@ -259,7 +335,7 @@ describe("FilePicker auto_trigger", function()
         function()
             Config.file_picker.auto_trigger = false
             local buf = vim.api.nvim_create_buf(false, true)
-            FilePicker:new(buf)
+            FilePicker:new(buf, vim.fn.getcwd())
             assert.equal(0, textchangedi_call_count())
             vim.api.nvim_buf_delete(buf, { force = true })
         end

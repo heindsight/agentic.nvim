@@ -126,7 +126,7 @@ end)()
             end
 
             local next_session = 0
-            ACPClient.create_session = function(self, handlers, callback)
+            ACPClient.create_session = function(self, _cwd, handlers, callback)
                 next_session = next_session + 1
                 local session_id = "new-session-" .. next_session
                 self:_subscribe(session_id, handlers)

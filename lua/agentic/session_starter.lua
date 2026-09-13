@@ -101,34 +101,38 @@ function SessionStartAttempt:start(spec, handlers, callback)
 
         self._request_sent = true
         if spec.kind == "new" then
-            self._agent:create_session(handlers, function(response, err)
-                if self._cancelled then
-                    self:_cancel_provider_session(
-                        response and response.sessionId or nil
-                    )
-                    return
-                end
+            self._agent:create_session(
+                spec.cwd,
+                handlers,
+                function(response, err)
+                    if self._cancelled then
+                        self:_cancel_provider_session(
+                            response and response.sessionId or nil
+                        )
+                        return
+                    end
 
-                if err or not response then
-                    self._request_sent = false
-                    self:complete(nil, err or INVALID_SPEC_ERROR)
-                    return
-                end
+                    if err or not response then
+                        self._request_sent = false
+                        self:complete(nil, err or INVALID_SPEC_ERROR)
+                        return
+                    end
 
-                self._claimed_session_id = response.sessionId
-                --- @type agentic.SessionStartResult
-                local result = {
-                    kind = "new",
-                    session_id = response.sessionId,
-                    response = response,
-                }
-                self:complete(result, nil)
-            end)
+                    self._claimed_session_id = response.sessionId
+                    --- @type agentic.SessionStartResult
+                    local result = {
+                        kind = "new",
+                        session_id = response.sessionId,
+                        response = response,
+                    }
+                    self:complete(result, nil)
+                end
+            )
         else
             self._replaying = true
             self._agent:load_session(
                 spec.session_id,
-                vim.fn.getcwd(),
+                spec.cwd,
                 {},
                 handlers,
                 function(response, err)

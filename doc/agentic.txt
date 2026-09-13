@@ -331,6 +331,11 @@ settings ~
   `move_cursor_to_chat_on_submit`  Automatically move cursor to chat
                        window after submitting a prompt.
                        Default: `true`.
+  `session_cwd`        Function deriving a new session's working
+                       directory from `{ bufnr }`, the buffer the
+                       keybinding ran in. Return an absolute directory
+                       or `nil` to fall back to the Neovim cwd. See
+                       |agentic-session-cwd|. Default: `nil`.
 
                                           *agentic-config-provider-switcher*
 provider_switcher ~
@@ -355,7 +360,9 @@ headers ~
   header parts and returns a custom string.
 
   Header functions receive an optional second argument, the live
-  session state. See |agentic-session-state|.
+  session state. See |agentic-session-state|. Header parts are `title`,
+  `context`, `suffix` and `cwd`, the session working directory
+  (|agentic-session-cwd|), which the default header does not print.
 
 >lua
   --- @type agentic.PartialUserConfig
@@ -456,6 +463,37 @@ falling back to the most recently opened one.
 Session keys appear in the chat buffer names once more than one session
 exists. |agentic.select_session()| lists every live session.
 
+                                                   *agentic-session-cwd*
+Each session has a working directory, fixed when it is created: sent to
+the provider on `session/new` and `session/load`, used as the
+`session/list` filter, scanned by the `@` file picker, and the base of
+every `@path` inserted or written to the chat. Resolution order:
+
+  1. An explicit `cwd` passed to |agentic.new_session()|,
+     |agentic.restore_session()| or |agentic.restore_session_by_id()|.
+  2. The working directory of the session being replaced: `/new`,
+     provider switch, restore with a live session, or
+     |agentic.new_session()| pressed inside the chat widget.
+  3. `settings.session_cwd(ctx)` (|agentic-config-settings|), called
+     with the buffer the keybinding ran in.
+  4. Neovim's cwd; window-local `:lcd` is honoured.
+
+A function error, non-string, relative path, or missing directory is
+reported and falls back to the next step. |agentic.open()|,
+|agentic.toggle()| and the add-to-context functions reuse the current
+session whatever project the current buffer belongs to. A session never
+follows `:cd` after creation.
+>lua
+  --- @type agentic.PartialUserConfig
+  opts = {
+    settings = {
+      session_cwd = function(ctx)
+        return vim.fs.root(ctx.bufnr, { ".git" })
+      end,
+    },
+  }
+<
+
                                                       *agentic.toggle()*
 agentic.toggle({opts})
   Toggle the chat sidebar in the current tab.
@@ -547,6 +585,9 @@ agentic.new_session({opts})
     {opts}  (table|nil)  Optional fields:
       `provider`              (string)   Switch provider for the
                                          new session.
+      `cwd`                   (string)   Absolute working directory
+                                         for the new session. See
+                                         |agentic-session-cwd|.
       `auto_add_to_context`   (boolean)  Default: `true`.
 
                                              *agentic.destroy_session()*
@@ -564,8 +605,9 @@ agentic.destroy_session({opts})
                                               *agentic.select_session()*
 agentic.select_session()
   Show a picker listing every live session and open the chosen one
-  in the current tab. Entries are labelled with the session title,
-  and the session visible in the current tab is marked. When no
+  in the current tab. Entries are labelled with the session title and
+  working directory, and the session visible in the current tab is
+  marked. When no
   sessions exist, report that state without opening the picker.
 
                                                 *agentic.next_session()*
@@ -599,22 +641,32 @@ agentic.stop_generation()
   session remains active and ready for the next prompt.
 
                                              *agentic.restore_session()*
-agentic.restore_session()
+agentic.restore_session({opts})
   Show the provider's session picker to restore a previous
   session. Sessions are interchangeable between Neovim and the
   terminal. When a current session exists, choose whether to keep it
   running in the background or destroy it. Selecting its already-current
   ACP session is a no-op; the current session is never destroyed.
+  Sessions are listed and loaded for one working directory, see
+  |agentic-session-cwd|.
+
+  Parameters: ~
+    {opts}  (table|nil)  Optional fields:
+      `cwd`  (string)  Absolute working directory to list and restore
+                       sessions for.
 
                                              *agentic.restore_session_by_id()*
-agentic.restore_session_by_id({session_id})
+agentic.restore_session_by_id({session_id}, {opts})
   Restore a previous session by its ID. When a current session
   exists, choose whether to keep it running in the background or
   destroy it. Selecting its already-current ACP session is a no-op;
   the current session is never destroyed.
 
   Parameters: ~
-    {session_id}  (string)  Session ID to restore.
+    {session_id}  (string)     Session ID to restore.
+    {opts}        (table|nil)  Optional fields:
+      `cwd`  (string)  Absolute working directory to load the session
+                       in. See |agentic-session-cwd|.
 
                                               *agentic.rotate_layout()*
 agentic.rotate_layout({layouts})
@@ -781,8 +833,9 @@ destroy it.
 
 File picker ~
                                                   *agentic-file-picker*
-Type `@` in the prompt to trigger native Neovim completion with
-workspace files. Reference multiple files: `@file1.lua @file2.lua`.
+Type `@` in the prompt to trigger native Neovim completion with files
+under the session working directory (|agentic-session-cwd|), inserted
+relative to it. Reference multiple files: `@file1.lua @file2.lua`.
 Uses `rg`, `fd`, `git ls-files`, or Lua globs as fallback.
 
 Image and screenshot support ~
@@ -828,8 +881,10 @@ owned by the current session is a no-op and never destroys it.
 System information ~
                                              *agentic-system-context*
 The first message of each session automatically includes platform
-info, shell/Neovim version, date, git status, and project root.
-This reduces time to first response by providing immediate context.
+info, shell/Neovim version, date, git status, and project root. Git
+status and project root describe the session working directory
+(|agentic-session-cwd|). This reduces time to first response by
+providing immediate context.
 
 Event hooks ~
                                                      *agentic-hooks*
@@ -840,7 +895,9 @@ now, and is `nil` for a session running in the background -- hidden, or
 in a closed tab. `on_session_update` fires for background sessions.
 Skipped during session restore. `on_response_complete` also fires for
 background sessions. Guard `tab_page_id` before passing it to any
-`nvim_tabpage_*` function; those raise on `nil`.
+`nvim_tabpage_*` function; those raise on `nil`. Every payload also
+carries `data.cwd`, the session working directory
+(|agentic-session-cwd|).
 >lua
   -- Token usage per session, keyed by session_key. A plain Lua table,
   -- because a session may be running in no tab at all.
@@ -853,6 +910,7 @@ background sessions. Guard `tab_page_id` before passing it to any
         -- Fires on both success and failure. Check `data.err` first.
         -- data.session_id: string|nil (nil if err is set)
         -- data.session_key: integer (stable session identity)
+        -- data.cwd: string (session working directory)
         -- data.tab_page_id: number|nil (nil while in the background)
         -- data.response: table|nil (nil if err is set)
         -- data.err: table|nil (nil on success)

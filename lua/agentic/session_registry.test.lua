@@ -142,6 +142,7 @@ describe("agentic.SessionRegistry", function()
 
     config_mock = {
         provider = "claude-acp",
+        settings = {},
         acp_providers = {
             ["claude-acp"] = { command = "claude-code-acp" },
             ["gemini-acp"] = { command = "gemini" },
@@ -859,9 +860,9 @@ describe("agentic.SessionRegistry", function()
                 local on_choice = select_stub.calls[1][3]
                 on_choice(items[1])
 
-                assert
-                    .spy(create_session_stub).was
-                    .called_with("gemini-acp", { kind = "new" })
+                assert.spy(create_session_stub).was.called(1)
+                assert.equal("gemini-acp", create_session_stub.calls[1][1])
+                assert.equal("new", create_session_stub.calls[1][2].kind)
                 assert.equal("claude-acp", config_mock.provider)
                 assert.equal(1, vim.tbl_count(SessionRegistry.sessions))
             end

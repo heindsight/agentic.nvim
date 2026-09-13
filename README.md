@@ -454,7 +454,8 @@ a table configuration or a custom render function.
 #### Function-Based Configuration
 
 For complete control over header rendering, provide a function that receives the
-header parts:
+header parts (`title`, `context`, `suffix`, and `cwd`, the session's working
+directory, which the default header does not print):
 
 ```lua
 {
@@ -469,6 +470,9 @@ header parts:
         end
         if parts.suffix then
           header = header .. " • " .. parts.suffix
+        end
+        if parts.cwd then
+          header = header .. " " .. vim.fn.fnamemodify(parts.cwd, ":~")
         end
         return header
       end,
@@ -737,6 +741,49 @@ assigned at creation and stable for its whole life.
 With a current session present, `new_session()` asks whether to keep it running in
 the background or destroy it after the new target session is ready.
 
+#### Session working directory
+
+Each session has a **Session CWD**: the directory sent to the provider on
+`session/new` and `session/load`, the root the `@` file picker scans, and the
+base every `@path` is relative to. It is fixed when the session is created:
+
+1. An explicit `cwd` passed to `new_session()`, `restore_session()`, or
+   `restore_session_by_id()`
+2. The Session CWD of the session being replaced (`/new`, provider switch,
+   restore with a live session, `new_session()` pressed inside the chat widget)
+3. `settings.session_cwd(ctx)`, called with the buffer the keybinding ran in
+4. Neovim's cwd (the default; window-local `:lcd` is honoured)
+
+`settings.session_cwd` is a function receiving `{ bufnr = integer }` and
+returning an absolute directory, or `nil` to fall back. An error, a non-string,
+a relative path, or a missing directory is reported and falls back too:
+
+```lua
+{
+  "carlos-algms/agentic.nvim",
+  --- @type agentic.PartialUserConfig
+  opts = {
+    settings = {
+      -- Root the session at the git repository of the file you are editing
+      session_cwd = function(ctx)
+        return vim.fs.root(ctx.bufnr, { ".git" })
+      end,
+    },
+  },
+}
+```
+
+`open()`, `toggle()` and the add-to-context functions reuse the current session
+whatever project the current buffer belongs to; only `new_session()` starts a
+session rooted elsewhere. A session never follows `:cd` after creation.
+
+```lua
+-- Bind "new session in this project" regardless of the current buffer
+require("agentic").new_session({ cwd = "/path/to/project" })
+-- List and restore sessions of another project
+require("agentic").restore_session({ cwd = "/path/to/project" })
+```
+
 `destroy_session(opts)` takes a **session** field naming the key to destroy.
 Without it, it destroys the session visible in the current tab, falling back to
 the most recently opened one.
@@ -747,8 +794,8 @@ require("agentic").destroy_session({ session = 2 })
 ```
 
 Session keys appear in chat buffer names once more than one session exists.
-`select_session()` lists every live session by title, marking the one visible in
-the current tab.
+`select_session()` lists every live session by title and Session CWD, marking
+the one visible in the current tab.
 
 ### Built-in Keybindings
 
@@ -917,8 +964,9 @@ or destroy it. Other commands are provided by your ACP provider.
 ### File Picker
 
 You can reference and add files to the context by typing `@` in the Prompt.  
-It will trigger the native Neovim completion menu with a list of all files in
-the current workspace.
+It will trigger the native Neovim completion menu with a list of all files under
+the session's working directory, inserted relative to it (see
+[Session working directory](#session-working-directory)).
 
 - **Automatic scanning**: Uses `rg`, `fd`, `git ls-files`, or lua globs as
   fallback
@@ -973,14 +1021,18 @@ everywhere the provider runs.
 
 Call `require("agentic").restore_session()` to:
 
-1. See a list of previous sessions from your provider for the current project
-   (including sessions started in the terminal)
+1. See a list of previous sessions from your provider for the session's
+   working directory (including sessions started in the terminal)
 2. Select a session to restore the full conversation history
 
 If you know the session ID, call
 `require("agentic").restore_session_by_id(session_id)` to restore a specific
 session directly. This skips listing sessions, so it also works with providers
 that don't support session listing.
+
+Both accept an optional `{ cwd = "/abs/dir" }` table. Otherwise the directory is
+the current session's working directory, else the one derived from the current
+buffer (see [Session working directory](#session-working-directory)).
 
 With a current session present, restoration uses the same lifecycle choice as
 `new_session()`: keep the current session running in the background or destroy
@@ -1002,11 +1054,11 @@ message of each session:
 - Platform information (OS, version, architecture)
 - Shell and Neovim version
 - Current date
-- Git repository status (if applicable):
+- Git repository status of the session's working directory (if applicable):
   - Current branch
   - Changed files
   - Recent commits (last 3)
-- Project root path
+- Project root path (the session's working directory)
 
 This helps the AI Agent understand the context of the current project without
 having to run additional commands or grep through files, the goals is to reduce
@@ -1025,7 +1077,8 @@ integrating with other plugins.
 > session running in the background** — hidden, or in a closed tab. Hooks like
 > `on_session_update` and `on_response_complete` fire for background sessions, so
 > guard `tab_page_id` before passing it to any `nvim_tabpage_*` call; those raise
-> on `nil`.
+> on `nil`. Every payload also carries `data.cwd`, the session's working
+> directory (see [Session working directory](#session-working-directory)).
 
 ```lua
 -- Token usage per session, keyed by session_key. A plain Lua table: a session is
@@ -1042,6 +1095,7 @@ return {
       on_create_session_response = function(data)
         -- data.session_id: string|nil - The ACP session ID (nil if err is set)
         -- data.session_key: integer - Stable session identity
+        -- data.cwd: string - The session's working directory
         -- data.tab_page_id: number|nil - Tab the session shows in right now;
         --   nil when it is running in the background
         -- data.response: table|nil - The ACP session creation response

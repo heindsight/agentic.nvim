@@ -47,20 +47,22 @@ describe("SessionStarter", function()
             self.failure_callback = on_failure
         end
 
-        function agent:create_session(_handlers, callback)
+        function agent:create_session(cwd, _handlers, callback)
             self.create_calls = self.create_calls + 1
+            self.create_cwd = cwd
             self.create_callback = callback
         end
 
         function agent:load_session(
             session_id,
-            _cwd,
+            cwd,
             _servers,
             _handlers,
             callback
         )
             self.load_calls = self.load_calls + 1
             self.load_session_id = session_id
+            self.load_cwd = cwd
             self.load_callback = callback
         end
 
@@ -86,6 +88,26 @@ describe("SessionStarter", function()
         get_instance_stub:revert()
         schedule_stub:revert()
     end)
+
+    for _, case in ipairs({
+        { kind = "new", field = "create_cwd" },
+        { kind = "load", session_id = "load-id", field = "load_cwd" },
+    }) do
+        it("sends the spec cwd on " .. case.kind, function()
+            local agent = new_agent()
+            local spec = vim.tbl_extend("force", case, { cwd = "/proj" })
+
+            SessionStarter.start(
+                agent,
+                spec,
+                prepare(NOOP_HANDLERS),
+                function() end
+            )
+            agent.ready_callback(agent)
+
+            assert.equal("/proj", agent[case.field])
+        end)
+    end
 
     it("returns an attempt without sending before readiness", function()
         local agent = new_agent()

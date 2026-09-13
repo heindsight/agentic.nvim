@@ -179,6 +179,30 @@ function FileSystem.to_smart_path(path)
     return vim.fn.fnamemodify(path, ":p:~:.")
 end
 
+--- `to_smart_path` against an explicit base instead of the Neovim cwd:
+--- relative when `path` is under `base`, else absolute with `~` for home.
+--- Providers resolve `@` mentions against the Session CWD, so picker and
+--- file-list output must be relative to it, not to Neovim's cwd (ADR 0009).
+--- Symlinked directories resolve on both sides, so a file listed through a
+--- link and through its target dedupe to one `@path`, as `:p:~:.` did.
+--- @param path string
+--- @param base string Absolute directory
+--- @return string
+function FileSystem.to_smart_path_from(path, base)
+    local absolute = vim.fn.fnamemodify(path, ":p")
+    local trailing = absolute:match("[/\\]$") and "/" or ""
+    local resolved = vim.fs.normalize(vim.fn.resolve(absolute))
+    local base_dir =
+        vim.fs.normalize(vim.fn.resolve(vim.fn.fnamemodify(base, ":p")))
+    local prefix = base_dir == "/" and "/" or base_dir .. "/"
+
+    if vim.startswith(resolved, prefix) then
+        return resolved:sub(#prefix + 1) .. trailing
+    end
+
+    return vim.fn.fnamemodify(resolved, ":~") .. trailing
+end
+
 --- @param file_path string
 --- @return string
 function FileSystem.get_file_extension(file_path)

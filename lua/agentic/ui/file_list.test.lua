@@ -20,7 +20,11 @@ describe("agentic.ui.FileList", function()
         fs_stat_stub = spy.stub(vim.uv, "fs_stat")
         fs_stat_stub:returns({ type = "file" })
 
-        file_list = FileList:new(bufnr, on_change_spy --[[@as function]])
+        file_list = FileList:new(
+            bufnr,
+            on_change_spy --[[@as function]],
+            vim.fn.getcwd()
+        )
     end)
 
     after_each(function()
@@ -251,6 +255,26 @@ describe("agentic.ui.FileList", function()
             assert.is_not_nil(text:find("  - ![](</tmp/diagram.SVG>)", 1, true))
             -- non-image files keep the original @-mention bullet.
             assert.is_not_nil(text:find("  %- @/tmp/code%.lua", 1))
+        end)
+
+        it("writes @-mentions relative to the Session CWD", function()
+            local other_bufnr = vim.api.nvim_create_buf(false, true)
+            local project_list = FileList:new(
+                other_bufnr,
+                on_change_spy --[[@as function]],
+                "/tmp"
+            )
+            project_list:add("/tmp/code.lua")
+            project_list:add("/tmp/sub/deep.lua")
+            project_list:add("/var/outside.lua")
+
+            local lines = project_list:to_prompt()
+            local text = table.concat(lines, "\n")
+
+            assert.is_not_nil(text:find("  - @code.lua", 1, true))
+            assert.is_not_nil(text:find("  - @sub/deep.lua", 1, true))
+            assert.is_not_nil(text:find("  - @/var/outside.lua", 1, true))
+            vim.api.nvim_buf_delete(other_bufnr, { force = true })
         end)
 
         it("returns one prompt entry per file and clears the list", function()

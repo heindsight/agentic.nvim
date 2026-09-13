@@ -21,6 +21,7 @@ describe("agentic.SessionNavigation", function()
     local function create_session(key, title, visible_tab, agent)
         return {
             session_key = key,
+            cwd = vim.env.HOME .. "/proj",
             chat_history = { title = title or "" },
             agent = agent or { provider_config = { name = "TestProvider" } },
             widget = {
@@ -74,11 +75,11 @@ describe("agentic.SessionNavigation", function()
         ui_select_stub:invokes(function(items, opts, on_choice)
             assert.equal(sessions, items)
             assert.equal(
-                "● First [TestProvider] (1)",
+                "● First [TestProvider] (1) ~/proj",
                 opts.format_item(first)
             )
             assert.equal(
-                "  Untitled [TestProvider] (2)",
+                "  Untitled [TestProvider] (2) ~/proj",
                 opts.format_item(second)
             )
             on_choice(second)
@@ -110,6 +111,27 @@ describe("agentic.SessionNavigation", function()
         assert.truthy(second_label and second_label:find("2", 1, true))
     end)
 
+    it("shows the Session CWD as a ~ path on every row", function()
+        local home_project = create_session(1, "My Chat", nil)
+        home_project.cwd = vim.env.HOME .. "/proj-x"
+        local untitled = create_session(2, "", nil)
+        untitled.cwd = "/srv/other"
+        sessions = { home_project, untitled }
+
+        --- @type string|nil, string|nil
+        local first_label, second_label
+        ui_select_stub:invokes(function(_, opts, on_choice)
+            first_label = opts.format_item(home_project)
+            second_label = opts.format_item(untitled)
+            on_choice(nil)
+        end)
+
+        SessionNavigation.select()
+
+        assert.truthy(first_label and first_label:find("~/proj-x", 1, true))
+        assert.truthy(second_label and second_label:find("/srv/other", 1, true))
+    end)
+
     it("appends the session key to a titled session too", function()
         local titled = create_session(7, "My Chat", nil)
         sessions = { titled, create_session(8, "", nil) }
@@ -123,7 +145,7 @@ describe("agentic.SessionNavigation", function()
 
         SessionNavigation.select()
 
-        assert.equal("  My Chat [TestProvider] (7)", label)
+        assert.equal("  My Chat [TestProvider] (7) ~/proj", label)
     end)
 
     it("shows the provider next to the title of a titled session", function()
@@ -142,7 +164,7 @@ describe("agentic.SessionNavigation", function()
 
         SessionNavigation.select()
 
-        assert.equal("● My Chat [claude-acp] (1)", label)
+        assert.equal("● My Chat [claude-acp] (1) ~/proj", label)
     end)
 
     it("shows the provider of an untitled session", function()
@@ -160,7 +182,7 @@ describe("agentic.SessionNavigation", function()
 
         SessionNavigation.select()
 
-        assert.equal("  Untitled [gemini-acp] (2)", label)
+        assert.equal("  Untitled [gemini-acp] (2) ~/proj", label)
     end)
 
     it("labels a session whose agent has no provider config", function()
@@ -178,7 +200,7 @@ describe("agentic.SessionNavigation", function()
             SessionNavigation.select()
         end)
 
-        assert.equal("  Untitled (4)", label)
+        assert.equal("  Untitled (4) ~/proj", label)
     end)
 
     it("does nothing when session selection is cancelled", function()

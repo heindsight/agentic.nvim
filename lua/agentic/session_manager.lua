@@ -16,6 +16,7 @@ local Hooks = require("agentic.utils.hooks")
 --- @field session_id? string
 --- @field session_key? integer Registry key, assigned by SessionRegistry.create
 --- @field provider_name agentic.UserConfig.ProviderName
+--- @field cwd string Session CWD, fixed for the session's whole life (ADR 0009)
 --- @field _is_first_message boolean
 --- @field is_generating boolean
 --- @field widget agentic.ui.ChatWidget
@@ -65,8 +66,9 @@ end
 
 --- @param agent agentic.acp.ACPClient
 --- @param provider_name agentic.UserConfig.ProviderName
+--- @param cwd string Session CWD, already resolved by the registry
 --- @param on_new_session fun(session: agentic.SessionManager)
-function SessionManager:new(agent, provider_name, on_new_session)
+function SessionManager:new(agent, provider_name, cwd, on_new_session)
     local ChatWidget = require("agentic.ui.chat_widget")
     local CodeSelection = require("agentic.ui.code_selection")
     local FileList = require("agentic.ui.file_list")
@@ -81,6 +83,7 @@ function SessionManager:new(agent, provider_name, on_new_session)
     self = setmetatable({
         session_id = nil,
         provider_name = provider_name,
+        cwd = cwd,
         _is_first_message = true,
         is_generating = false,
         _connection_error = false,
@@ -99,6 +102,7 @@ function SessionManager:new(agent, provider_name, on_new_session)
     self.widget = ChatWidget:new(function(input_text)
         return self:_handle_input_submit(input_text)
     end)
+    self.widget.cwd = cwd
 
     self.message_writer = MessageWriter:new(self.widget.buf_nrs.chat)
     self.message_writer:set_provider_name(self.agent.provider_config.name)
@@ -107,7 +111,7 @@ function SessionManager:new(agent, provider_name, on_new_session)
     self.permission_manager = PermissionManager:new(self.message_writer)
 
     -- Strong reference required: `instances_by_buffer` holds only weak values.
-    self.file_picker = FilePicker:new(self.widget.buf_nrs.input)
+    self.file_picker = FilePicker:new(self.widget.buf_nrs.input, cwd)
     SlashCommands.setup_completion(self.widget.buf_nrs.input)
 
     self.diff_coordinator =
@@ -145,7 +149,7 @@ function SessionManager:new(agent, provider_name, on_new_session)
             self.widget:render_header("files", tostring(#file_list:get_files()))
             self.widget:rerender()
         end
-    end)
+    end, cwd)
 
     self.code_selection = CodeSelection:new(
         self.widget.buf_nrs.code,
@@ -390,6 +394,7 @@ function SessionManager:_on_session_update(update, replaying)
     local hook_data = {
         session_id = self.session_id,
         session_key = self.session_key,
+        cwd = self.cwd,
         tab_page_id = self.widget:get_visible_tab_id(),
         update = update,
     }
@@ -497,6 +502,7 @@ function SessionManager:_on_tool_call_update(tool_call_update, replaying)
                     filepath = abs_path,
                     session_id = self.session_id,
                     session_key = self.session_key,
+                    cwd = self.cwd,
                     tab_page_id = self.widget:get_visible_tab_id(),
                     bufnr = bufnr,
                 }
@@ -564,7 +570,7 @@ function SessionManager:_handle_input_submit(input_text)
 
         table.insert(prompt, {
             type = "text",
-            text = EnvironmentInfo.get_system_info(),
+            text = EnvironmentInfo.get_system_info(self.cwd),
         })
     end
 
@@ -620,6 +626,7 @@ function SessionManager:_handle_input_submit(input_text)
         prompt = input_text,
         session_id = self.session_id,
         session_key = self.session_key,
+        cwd = self.cwd,
         tab_page_id = self.widget:get_visible_tab_id(),
     }
     Hooks.invoke("on_prompt_submit", prompt_hook_data)
@@ -643,6 +650,7 @@ function SessionManager:_handle_input_submit(input_text)
             local response_hook_data = {
                 session_id = session_id --[[@as string]],
                 session_key = self.session_key,
+                cwd = self.cwd,
                 tab_page_id = self.widget:get_visible_tab_id(),
                 success = err == nil,
                 error = err,
@@ -717,6 +725,7 @@ function SessionManager:_build_handlers(is_replaying)
                 request = request,
                 session_id = self.session_id,
                 session_key = self.session_key,
+                cwd = self.cwd,
                 tab_page_id = self.widget:get_visible_tab_id(),
             })
 
@@ -842,6 +851,7 @@ function SessionManager:complete_start(spec, result, err, callback)
             local hook_data = {
                 session_id = nil,
                 session_key = self.session_key,
+                cwd = self.cwd,
                 tab_page_id = self.widget:get_visible_tab_id(),
                 response = nil,
                 err = err,
@@ -901,6 +911,7 @@ function SessionManager:complete_start(spec, result, err, callback)
         local hook_data = {
             session_id = result.session_id,
             session_key = self.session_key,
+            cwd = self.cwd,
             tab_page_id = self.widget:get_visible_tab_id(),
             response = result.response,
             err = nil,

@@ -2,23 +2,34 @@ local Logger = require("agentic.utils.logger")
 local Config = require("agentic.config")
 local AgentInstance = require("agentic.acp.agent_instance")
 local SessionRegistry = require("agentic.session_registry")
+local SessionCwd = require("agentic.session_cwd")
 
 --- @class agentic.SessionRestoreContext
 --- @field agent agentic.acp.ACPClient
 --- @field provider_name agentic.UserConfig.ProviderName
 --- @field source? agentic.SessionManager
+--- @field cwd string Session CWD used for both `session/list` and `session/load`
+
+--- @class agentic.SessionRestoreOpts
+--- @field cwd? string Absolute directory forced as the Session CWD
 
 --- @class agentic.SessionRestore
 local SessionRestore = {}
 
+--- Resolves the Session CWD once, so the list filter and the load agree.
+--- @param opts agentic.SessionRestoreOpts|nil
 --- @return agentic.SessionRestoreContext|nil context
-local function resolve_context()
+local function resolve_context(opts)
+    local override = opts and opts.cwd
+    local acting_bufnr = vim.api.nvim_get_current_buf()
+
     local source = SessionRegistry.current()
     if source then
         return {
             agent = source.agent,
             provider_name = source.provider_name,
             source = source,
+            cwd = SessionCwd.resolve(override or source.cwd, acting_bufnr),
         }
     end
 
@@ -30,6 +41,7 @@ local function resolve_context()
     return {
         agent = agent,
         provider_name = Config.provider,
+        cwd = SessionCwd.resolve(override, acting_bufnr),
     }
 end
 
@@ -58,6 +70,7 @@ local function restore(context, session_id, title, timestamp)
         session_id = session_id,
         title = title,
         timestamp = timestamp,
+        cwd = context.cwd,
     }
 
     -- Only a fresh target issues `session/load`; an existing manager can be
@@ -95,15 +108,15 @@ local function restore(context, session_id, title, timestamp)
     )
 end
 
-function SessionRestore.show_picker()
-    local context = resolve_context()
+--- @param opts agentic.SessionRestoreOpts|nil
+function SessionRestore.show_picker(opts)
+    local context = resolve_context(opts)
     if not context then
         return
     end
 
-    local cwd = vim.fn.getcwd()
     context.agent:when_ready(function()
-        context.agent:list_sessions(cwd, function(result, err)
+        context.agent:list_sessions(context.cwd, function(result, err)
             if err or not result then
                 Logger.notify(
                     "Failed to list sessions: "
@@ -157,8 +170,9 @@ function SessionRestore.show_picker()
 end
 
 --- @param session_id string
-function SessionRestore.restore_by_id(session_id)
-    local context = resolve_context()
+--- @param opts agentic.SessionRestoreOpts|nil
+function SessionRestore.restore_by_id(session_id, opts)
+    local context = resolve_context(opts)
     if not context then
         return
     end

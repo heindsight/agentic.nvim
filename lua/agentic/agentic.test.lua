@@ -25,6 +25,12 @@ describe("agentic: switch_provider", function()
     local initial_tab_id
     local deferred_create_callback
     local create_session_calls
+    --- @type string[] `cwd` argument of every `create_session`, in call order
+    local create_session_cwds
+    --- @type string[] `cwd` argument of every `list_sessions`, in call order
+    local list_sessions_cwds
+    --- @type string[] `cwd` argument of every `load_session`, in call order
+    local load_session_cwds
     --- @type table<integer, boolean>
     local initial_tabs
 
@@ -58,6 +64,9 @@ describe("agentic: switch_provider", function()
         transient_stubs = {}
         deferred_create_callback = nil
         create_session_calls = 0
+        create_session_cwds = {}
+        list_sessions_cwds = {}
+        load_session_cwds = {}
         logger_notify_stub = spy.stub(Logger, "notify")
 
         -- Queue callbacks so they run after synchronous code completes
@@ -85,6 +94,30 @@ describe("agentic: switch_provider", function()
                 default_mode = nil,
             }
             fake_agent.agent_info = {}
+            fake_agent.agent_capabilities = {
+                loadSession = true,
+                sessionCapabilities = { list = true },
+            }
+
+            function fake_agent:list_sessions(cwd, callback)
+                list_sessions_cwds[#list_sessions_cwds + 1] = cwd
+                callback({
+                    sessions = { { sessionId = "saved-1", title = "Saved" } },
+                }, nil)
+            end
+
+            function fake_agent:load_session(
+                _session_id,
+                cwd,
+                _servers,
+                _handlers,
+                callback
+            )
+                load_session_cwds[#load_session_cwds + 1] = cwd
+                if callback then
+                    callback({}, nil)
+                end
+            end
 
             function fake_agent:when_ready(on_ready, _on_failure)
                 vim.schedule(function()
@@ -93,8 +126,9 @@ describe("agentic: switch_provider", function()
             end
 
             -- Synchronous: mini.test has no event loop to pump
-            function fake_agent:create_session(_handlers, callback)
+            function fake_agent:create_session(cwd, _handlers, callback)
                 create_session_calls = create_session_calls + 1
+                create_session_cwds[#create_session_cwds + 1] = cwd
                 if agent_name == "DeferredProvider" then
                     deferred_create_callback = callback
                     return
@@ -1009,6 +1043,331 @@ describe("agentic: switch_provider", function()
         assert.spy(create_stub).was.called(0)
         assert.spy(resolve_stub).was.called(0)
     end)
+
+    describe("session cwd", function()
+        local original_session_cwd
+
+        before_each(function()
+            original_session_cwd = Config.settings.session_cwd
+        end)
+
+        after_each(function()
+            Config.settings.session_cwd = original_session_cwd
+        end)
+
+        it("sends the Neovim cwd on session/new without a cwd rule", function()
+            local Agentic = require("agentic")
+            Config.settings.session_cwd = nil
+
+            Agentic.open({ auto_add_to_context = false })
+            flush_schedule()
+
+            assert.same({ vim.fn.getcwd() }, create_session_cwds)
+        end)
+
+        it(
+            "sends the directory the cwd rule derives from the buffer",
+            function()
+                local Agentic = require("agentic")
+                local project_dir = vim.fn.tempname()
+                vim.fn.mkdir(project_dir, "p")
+                local file_bufnr = vim.fn.bufadd(project_dir .. "/main.lua")
+                vim.api.nvim_set_current_buf(file_bufnr)
+                local seen_bufnr
+                Config.settings.session_cwd = function(ctx)
+                    seen_bufnr = ctx.bufnr
+                    return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
+                end
+
+                Agentic.open({ auto_add_to_context = false })
+                flush_schedule()
+
+                assert.equal(file_bufnr, seen_bufnr)
+                assert.same({ project_dir }, create_session_cwds)
+                assert.spy(logger_notify_stub).was.called(0)
+            end
+        )
+
+        it("falls back to the Neovim cwd when the rule returns nil", function()
+            local Agentic = require("agentic")
+            Config.settings.session_cwd = function()
+                return nil
+            end
+
+            Agentic.open({ auto_add_to_context = false })
+            flush_schedule()
+
+            assert.same({ vim.fn.getcwd() }, create_session_cwds)
+            assert.spy(logger_notify_stub).was.called(0)
+        end)
+
+        for _, case in ipairs({
+            {
+                name = "errors",
+                rule = function()
+                    error("boom")
+                end,
+            },
+            {
+                name = "returns a non-string",
+                rule = function()
+                    return 42
+                end,
+            },
+            {
+                name = "returns a relative path",
+                rule = function()
+                    return "lua"
+                end,
+            },
+            {
+                name = "returns a missing directory",
+                rule = function()
+                    return vim.fn.tempname()
+                end,
+            },
+        }) do
+            it(
+                "notifies once and falls back when the rule " .. case.name,
+                function()
+                    local Agentic = require("agentic")
+                    Config.settings.session_cwd = case.rule
+
+                    Agentic.open({ auto_add_to_context = false })
+                    flush_schedule()
+
+                    assert.same({ vim.fn.getcwd() }, create_session_cwds)
+                    assert.spy(logger_notify_stub).was.called(1)
+                end
+            )
+        end
+
+        --- A registered session whose Session CWD is a fresh temp directory.
+        --- @return agentic.SessionManager session
+        --- @return string project_dir
+        local function create_session_in_temp_dir()
+            local project_dir = vim.fn.tempname()
+            vim.fn.mkdir(project_dir, "p")
+            Config.settings.session_cwd = function()
+                return project_dir
+            end
+            local session = create_session()
+            Config.settings.session_cwd = nil
+
+            return session, project_dir
+        end
+
+        --- The lifecycle picker keeps the source in the background.
+        local function keep_source_on_select()
+            local select_stub = track_stub(vim.ui, "select")
+            select_stub:invokes(function(items, _opts, on_choice)
+                on_choice(items[1])
+            end)
+        end
+
+        it("inherits the source Session CWD on /new", function()
+            local session, project_dir = create_session_in_temp_dir()
+            keep_source_on_select()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
+
+            session.widget.on_submit_input("/new")
+            flush_schedule()
+
+            assert.same({ project_dir, project_dir }, create_session_cwds)
+        end)
+
+        it("inherits the source Session CWD on provider switch", function()
+            local Agentic = require("agentic")
+            local _session, project_dir = create_session_in_temp_dir()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
+
+            Agentic.switch_provider({ provider = "gemini-acp" })
+            flush_schedule()
+
+            assert.same({ project_dir, project_dir }, create_session_cwds)
+        end)
+
+        it(
+            "inherits the Session CWD when new_session runs in a widget buffer",
+            function()
+                local Agentic = require("agentic")
+                local session, project_dir = create_session_in_temp_dir()
+                keep_source_on_select()
+                vim.api.nvim_set_current_buf(session.widget.buf_nrs.input)
+                Config.settings.session_cwd = function()
+                    return vim.fn.tempname()
+                end
+
+                Agentic.new_session({ auto_add_to_context = false })
+                flush_schedule()
+
+                assert.same({ project_dir, project_dir }, create_session_cwds)
+            end
+        )
+
+        it(
+            "derives the Session CWD when new_session runs in a file buffer",
+            function()
+                local Agentic = require("agentic")
+                local _session, project_dir = create_session_in_temp_dir()
+                keep_source_on_select()
+                local other_dir = vim.fn.tempname()
+                vim.fn.mkdir(other_dir, "p")
+                vim.api.nvim_set_current_buf(
+                    vim.fn.bufadd(other_dir .. "/x.lua")
+                )
+                Config.settings.session_cwd = function(ctx)
+                    return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
+                end
+
+                Agentic.new_session({ auto_add_to_context = false })
+                flush_schedule()
+
+                assert.same({ project_dir, other_dir }, create_session_cwds)
+            end
+        )
+
+        it(
+            "lets new_session opts.cwd win over the source and the rule",
+            function()
+                local Agentic = require("agentic")
+                local session, project_dir = create_session_in_temp_dir()
+                keep_source_on_select()
+                vim.api.nvim_set_current_buf(session.widget.buf_nrs.input)
+                Config.settings.session_cwd = function()
+                    return vim.fn.tempname()
+                end
+                local forced_dir = vim.fn.tempname()
+                vim.fn.mkdir(forced_dir, "p")
+
+                Agentic.new_session({
+                    auto_add_to_context = false,
+                    cwd = forced_dir .. "/",
+                })
+                flush_schedule()
+
+                assert.same({ project_dir, forced_dir }, create_session_cwds)
+            end
+        )
+
+        it(
+            "reuses the current session from a buffer in another project",
+            function()
+                local Agentic = require("agentic")
+                local _session, project_dir = create_session_in_temp_dir()
+                local other_dir = vim.fn.tempname()
+                vim.fn.mkdir(other_dir, "p")
+                vim.api.nvim_set_current_buf(
+                    vim.fn.bufadd(other_dir .. "/x.lua")
+                )
+                Config.settings.session_cwd = function()
+                    return other_dir
+                end
+
+                Agentic.open({ auto_add_to_context = false })
+                flush_schedule()
+
+                assert.same({ project_dir }, create_session_cwds)
+                assert.equal(1, vim.tbl_count(SessionRegistry.sessions))
+            end
+        )
+
+        it("restores with the source Session CWD for list and load", function()
+            local Agentic = require("agentic")
+            local _session, project_dir = create_session_in_temp_dir()
+            keep_source_on_select()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
+
+            Agentic.restore_session()
+            flush_schedule()
+
+            assert.same({ project_dir }, list_sessions_cwds)
+            assert.same({ project_dir }, load_session_cwds)
+        end)
+
+        it(
+            "restores with the derived Session CWD when no session is live",
+            function()
+                local Agentic = require("agentic")
+                keep_source_on_select()
+                local other_dir = vim.fn.tempname()
+                vim.fn.mkdir(other_dir, "p")
+                vim.api.nvim_set_current_buf(
+                    vim.fn.bufadd(other_dir .. "/x.lua")
+                )
+                Config.settings.session_cwd = function(ctx)
+                    return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
+                end
+
+                Agentic.restore_session()
+                flush_schedule()
+
+                assert.same({ other_dir }, list_sessions_cwds)
+                assert.same({ other_dir }, load_session_cwds)
+            end
+        )
+
+        it("lets restore_session opts.cwd win over the source", function()
+            local Agentic = require("agentic")
+            create_session_in_temp_dir()
+            keep_source_on_select()
+            local forced_dir = vim.fn.tempname()
+            vim.fn.mkdir(forced_dir, "p")
+
+            Agentic.restore_session({ cwd = forced_dir })
+            flush_schedule()
+
+            assert.same({ forced_dir }, list_sessions_cwds)
+            assert.same({ forced_dir }, load_session_cwds)
+        end)
+
+        it("restores by id with the source Session CWD", function()
+            local Agentic = require("agentic")
+            local _session, project_dir = create_session_in_temp_dir()
+            keep_source_on_select()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
+
+            Agentic.restore_session_by_id("saved-1")
+            flush_schedule()
+
+            assert.same({ project_dir }, load_session_cwds)
+        end)
+
+        it("lets restore_session_by_id opts.cwd win over the source", function()
+            local Agentic = require("agentic")
+            create_session_in_temp_dir()
+            keep_source_on_select()
+            local forced_dir = vim.fn.tempname()
+            vim.fn.mkdir(forced_dir, "p")
+
+            Agentic.restore_session_by_id("saved-1", { cwd = forced_dir })
+            flush_schedule()
+
+            assert.same({ forced_dir }, load_session_cwds)
+        end)
+
+        it("strips the trailing slash from a derived directory", function()
+            local Agentic = require("agentic")
+            local project_dir = vim.fn.tempname()
+            vim.fn.mkdir(project_dir, "p")
+            Config.settings.session_cwd = function()
+                return project_dir .. "/"
+            end
+
+            Agentic.open({ auto_add_to_context = false })
+            flush_schedule()
+
+            assert.same({ project_dir }, create_session_cwds)
+        end)
+    end)
 end)
 
 describe("agentic: restore entry points", function()
@@ -1042,7 +1401,7 @@ describe("agentic: restore entry points", function()
         assert.spy(current_stub).was.called(0)
         assert.spy(get_instance_stub).was.called(0)
         assert.spy(resolve_stub).was.called(0)
-        assert.spy(picker_stub).was.called_with()
+        assert.spy(picker_stub).was.called(1)
     end)
 
     it(
@@ -1053,7 +1412,8 @@ describe("agentic: restore entry points", function()
             assert.spy(current_stub).was.called(0)
             assert.spy(get_instance_stub).was.called(0)
             assert.spy(resolve_stub).was.called(0)
-            assert.spy(restore_stub).was.called_with("saved-id")
+            assert.spy(restore_stub).was.called(1)
+            assert.equal("saved-id", restore_stub.calls[1][1])
         end
     )
 end)

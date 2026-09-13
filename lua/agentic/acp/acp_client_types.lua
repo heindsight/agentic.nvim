@@ -237,9 +237,10 @@
 --- @field models? agentic.acp.ModelsInfo
 --- @field configOptions? agentic.acp.AnyConfigOption[]
 
+--- `cwd` is the Session CWD; `SessionRegistry.create` fills it in when absent.
 --- @alias agentic.SessionStartSpec
---- | { kind: "new" }
---- | { kind: "load", session_id: string, title?: string, timestamp?: string|integer }
+--- | { kind: "new", cwd?: string }
+--- | { kind: "load", session_id: string, title?: string, timestamp?: string|integer, cwd?: string }
 
 --- @class agentic.SessionStartNewResult
 --- @field kind "new"

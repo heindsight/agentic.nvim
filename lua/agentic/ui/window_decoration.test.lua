@@ -546,6 +546,34 @@ describe("WindowDecoration.render_header", function()
         assert.is_true(child.lua_get("_G.recorded_buffer_name_marker == nil"))
     end)
 
+    it("passes the owner's Session CWD in the header parts", function()
+        child.lua([[
+            local WindowDecoration = require("agentic.ui.window_decoration")
+            local WidgetRegistry = require("agentic.ui.widget_registry")
+            local Config = require("agentic.config")
+
+            local bufnr = vim.api.nvim_create_buf(false, true)
+            vim.api.nvim_win_set_buf(0, bufnr)
+            WidgetRegistry.register({
+                buf_nrs = { chat = bufnr },
+                win_nrs = { chat = vim.api.nvim_get_current_win() },
+                headers = WindowDecoration.default_headers(),
+                cwd = "/proj",
+            })
+
+            Config.headers = Config.headers or {}
+            Config.headers.chat = function(parts)
+                _G.recorded_cwd = parts.cwd
+                return parts.title
+            end
+
+            WindowDecoration.render_header(bufnr, "chat", nil, nil)
+        ]])
+        child.flush()
+
+        assert.equal("/proj", child.lua_get("_G.recorded_cwd"))
+    end)
+
     it("sets the winbar for a buffer shown only in another tab", function()
         child.lua([[
             local WindowDecoration = require("agentic.ui.window_decoration")

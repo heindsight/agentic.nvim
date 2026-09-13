@@ -66,6 +66,14 @@ function SessionNavigation.select()
             -- provider all render the same row.
             label = string.format("%s (%d)", label, item.session_key)
 
+            -- Two untitled sessions on one provider in different repositories
+            -- are otherwise indistinguishable.
+            label = string.format(
+                "%s %s",
+                label,
+                vim.fn.fnamemodify(item.cwd, ":~")
+            )
+
             local prefix = item.widget:get_visible_tab_id() == current_tab
                     and "● "
                 or "  "

@@ -460,6 +460,9 @@ function WindowDecoration.render_header(
             dynamic_header.context = context
         end
 
+        -- Re-stamped on every render: `headers` is rebuilt by `_initialize`.
+        dynamic_header.cwd = owner and owner.cwd or nil
+
         -- The owner's own window, or a copy the user opened elsewhere takes the winbar.
         local winid = BufHelpers.find_visible_win(
             bufnr,

@@ -233,7 +233,7 @@ describe("SessionRestore", function()
         assert.spy(replace_stub).was.called_with(
             source,
             "claude-acp",
-            { kind = "load", session_id = "one" },
+            { kind = "load", session_id = "one", cwd = vim.fn.getcwd() },
             { agent = agent, retain_source = true }
         )
     end)
@@ -252,7 +252,7 @@ describe("SessionRestore", function()
         assert.spy(replace_stub).was.called_with(
             source,
             "claude-acp",
-            { kind = "load", session_id = "one" },
+            { kind = "load", session_id = "one", cwd = vim.fn.getcwd() },
             { agent = agent }
         )
     end)
@@ -370,7 +370,7 @@ describe("SessionRestore", function()
             assert.spy(replace_stub).was.called_with(
                 source,
                 "claude-acp",
-                { kind = "load", session_id = "one" },
+                { kind = "load", session_id = "one", cwd = vim.fn.getcwd() },
                 { agent = agent, retain_source = true }
             )
         end
@@ -388,7 +388,7 @@ describe("SessionRestore", function()
         assert.spy(replace_stub).was.called_with(
             source,
             "claude-acp",
-            { kind = "load", session_id = "one" },
+            { kind = "load", session_id = "one", cwd = vim.fn.getcwd() },
             { agent = agent, retain_source = true }
         )
         assert.spy(commit_stub).was.called(0)

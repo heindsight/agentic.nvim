@@ -49,6 +49,7 @@ agentic-permission-approval	agentic.txt	/*agentic-permission-approval*
 agentic-permission-icons	agentic.txt	/*agentic-permission-icons*
 agentic-render-markdown	agentic.txt	/*agentic-render-markdown*
 agentic-requirements	agentic.txt	/*agentic-requirements*
+agentic-session-cwd	agentic.txt	/*agentic-session-cwd*
 agentic-session-restore	agentic.txt	/*agentic-session-restore*
 agentic-session-state	agentic.txt	/*agentic-session-state*
 agentic-sessions	agentic.txt	/*agentic-sessions*

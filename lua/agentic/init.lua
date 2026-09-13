@@ -125,6 +125,7 @@ end
 
 --- @class agentic.ui.NewSessionOpts : agentic.ui.ChatWidget.ShowOpts
 --- @field provider? agentic.UserConfig.ProviderName
+--- @field cwd? string Absolute directory forced as the Session CWD
 
 --- Add diagnostics at the current cursor line to the Chat context
 --- @param opts agentic.ui.ChatWidget.AddToContextOpts|nil
@@ -162,13 +163,14 @@ end
 --- @param opts agentic.ui.NewSessionOpts|nil
 function Agentic.new_session(opts)
     local provider = opts and opts.provider
+    local cwd = opts and opts.cwd
 
     SessionRegistry.create_with_current_session_guard(function(session)
         if not opts or opts.auto_add_to_context ~= false then
             session:add_selection_or_file_to_session()
         end
         show_session(session, opts)
-    end, provider)
+    end, provider, cwd)
 end
 
 --- Destroys a Chat session and its widget
@@ -241,14 +243,16 @@ function Agentic.stop_generation()
 end
 
 --- show a selector to restore a previous session
-function Agentic.restore_session()
-    SessionRestore.show_picker()
+--- @param opts agentic.SessionRestoreOpts|nil
+function Agentic.restore_session(opts)
+    SessionRestore.show_picker(opts)
 end
 
 --- Restore a session by its ID.
 --- @param session_id string
-function Agentic.restore_session_by_id(session_id)
-    SessionRestore.restore_by_id(session_id)
+--- @param opts agentic.SessionRestoreOpts|nil
+function Agentic.restore_session_by_id(session_id, opts)
+    SessionRestore.restore_by_id(session_id, opts)
 end
 
 --- Guards signal handlers and autocmds against a repeated `setup` call

@@ -5,6 +5,7 @@ local BufHelpers = require("agentic.utils.buf_helpers")
 
 --- @class agentic.ui.FilePicker
 --- @field _files table[]
+--- @field _cwd string Session CWD: scan root and base of every inserted `@path`
 local FilePicker = {}
 FilePicker.__index = FilePicker
 
@@ -35,14 +36,15 @@ FilePicker.CMD_GIT = { "git", "ls-files", "-co", "--exclude-standard" }
 local instances_by_buffer = setmetatable({}, { __mode = "v" })
 
 --- @param bufnr number
+--- @param cwd string Session CWD
 --- @return agentic.ui.FilePicker|nil
-function FilePicker:new(bufnr)
+function FilePicker:new(bufnr, cwd)
     if not Config.file_picker.enabled then
         return nil
     end
 
     --- @type agentic.ui.FilePicker
-    local instance = setmetatable({ _files = {} }, self)
+    local instance = setmetatable({ _files = {}, _cwd = cwd }, self)
     instance:_setup_completion(bufnr)
     return instance
 end
@@ -127,6 +129,17 @@ function FilePicker:_setup_completion(bufnr)
     })
 end
 
+--- @param path string Relative to the Session CWD, or absolute
+--- @return string
+function FilePicker:_to_session_path(path)
+    local absolute = path
+    if not vim.startswith(path, "/") and not path:match("^%a:[/\\]") then
+        absolute = vim.fs.joinpath(self._cwd, path)
+    end
+
+    return FileSystem.to_smart_path_from(absolute, self._cwd)
+end
+
 function FilePicker:scan_files()
     local commands = self:_build_scan_commands()
 
@@ -135,22 +148,26 @@ function FilePicker:scan_files()
         Logger.debug("[FilePicker] Trying command:", vim.inspect(cmd_parts))
         local start_time = vim.loop.hrtime()
 
-        local output = vim.fn.system(cmd_parts)
+        -- `vim.fn.system` inherits Neovim's process cwd; only `vim.system`
+        -- can run in the Session CWD.
+        local result = vim.system(cmd_parts, { cwd = self._cwd, text = true })
+            :wait()
+        local output = result.stdout or ""
         local elapsed = (vim.loop.hrtime() - start_time) / 1e6
 
         Logger.debug(
             string.format(
                 "[FilePicker] Command completed in %.2fms, exit_code: %d",
                 elapsed,
-                vim.v.shell_error
+                result.code
             )
         )
 
-        if vim.v.shell_error == 0 and output ~= "" then
+        if result.code == 0 and output ~= "" then
             local files = {}
             for line in output:gmatch("[^\n]+") do
                 if line ~= "" then
-                    local relative_path = FileSystem.to_smart_path(line)
+                    local relative_path = self:_to_session_path(line)
                     table.insert(files, {
                         word = "@" .. relative_path,
                         menu = "File",
@@ -174,17 +191,22 @@ function FilePicker:scan_files()
     local files = {}
     local seen = {}
     -- Get all files including hidden files (dotfiles) and files inside hidden directories
-    -- Note: vim.fn.glob() doesn't support brace expansion, so we need separate calls
-    local glob_files = vim.fn.glob("**/*", false, true) -- Regular files
-    local hidden_files = vim.fn.glob("**/.*", false, true) -- Dotfiles at any depth
-    local files_in_hidden = vim.fn.glob("**/.*/**/*", false, true) -- Files inside dot dirs
+    -- Note: glob doesn't support brace expansion, so we need separate calls.
+    -- `globpath` anchors every pattern at the Session CWD and returns full paths.
+    local cwd = self._cwd
+    local glob_files = vim.fn.globpath(cwd, "**/*", false, true) -- Regular files
+    local hidden_files = vim.fn.globpath(cwd, "**/.*", false, true) -- Dotfiles at any depth
+    local files_in_hidden = vim.fn.globpath(cwd, "**/.*/**/*", false, true) -- Files inside dot dirs
     vim.list_extend(glob_files, hidden_files)
     vim.list_extend(glob_files, files_in_hidden)
     Logger.debug("[FilePicker] Glob returned", #glob_files, "paths")
 
     for _, path in ipairs(glob_files) do
-        if vim.fn.isdirectory(path) == 0 and not self:_should_exclude(path) then
-            local relative_path = FileSystem.to_smart_path(path)
+        local relative_path = self:_to_session_path(path)
+        if
+            vim.fn.isdirectory(path) == 0
+            and not self:_should_exclude(relative_path)
+        then
             if not seen[relative_path] then
                 seen[relative_path] = true
                 table.insert(files, {
@@ -206,7 +228,7 @@ function FilePicker:scan_files()
 end
 
 --- Builds list of all available scan commands to try in order
---- All commands run in current working directory by default
+--- All commands run in the Session CWD
 --- @return table[] commands List of command arrays to try
 function FilePicker:_build_scan_commands()
     local commands = {}
@@ -220,8 +242,11 @@ function FilePicker:_build_scan_commands()
     end
 
     if vim.fn.executable(FilePicker.CMD_GIT[1]) == 1 then
-        local _ = vim.fn.system("git rev-parse --git-dir 2>/dev/null")
-        if vim.v.shell_error == 0 then
+        local git_check = vim.system(
+            { FilePicker.CMD_GIT[1], "rev-parse", "--git-dir" },
+            { cwd = self._cwd }
+        ):wait()
+        if git_check.code == 0 then
             table.insert(commands, vim.list_extend({}, FilePicker.CMD_GIT))
         end
     end

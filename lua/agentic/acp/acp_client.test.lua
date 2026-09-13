@@ -243,7 +243,7 @@ describe("ACPClient", function()
 
                 _G.p5_direct_delivery = {}
 
-                client:create_session({
+                client:create_session(vim.fn.getcwd(), {
                     on_session_update = function() end,
                     on_request_permission = function() end,
                     on_error = function() end,
@@ -299,7 +299,7 @@ describe("ACPClient", function()
                 }
 
                 local function create_request(index)
-                    client:create_session(handlers, function(result, err)
+                    client:create_session(vim.fn.getcwd(), handlers, function(result, err)
                         _G.p5_fast_delivery.callbacks[index] = {
                             fast = vim.in_fast_event(),
                             result = result,
@@ -1205,7 +1205,11 @@ describe("ACPClient", function()
             local client = create_ready_client()
             local sent = capture_sent()
 
-            client:create_session(NOOP_HANDLERS, function() end)
+            client:create_session(
+                vim.fn.getcwd(),
+                NOOP_HANDLERS,
+                function() end
+            )
             client:send_prompt("s1", {}, function() end)
             client:set_config_option({
                 sessionId = "s1",

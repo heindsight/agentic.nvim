@@ -1517,6 +1517,56 @@ describe("agentic.ui.ChatWidget", function()
         )
     end)
 
+    describe("open_editor_window oldfile placeholder", function()
+        local widget
+        local original_oldfiles
+        local widget_tab
+
+        before_each(function()
+            original_oldfiles = vim.v.oldfiles
+            vim.cmd("tabnew")
+            widget_tab = vim.api.nvim_get_current_tabpage()
+            widget = ChatWidget:new(spy.new(function() end) --[[@as function]])
+        end)
+
+        after_each(function()
+            vim.v.oldfiles = original_oldfiles
+            pcall(function()
+                widget:destroy()
+            end)
+            widget = nil
+            if vim.api.nvim_tabpage_is_valid(widget_tab) then
+                pcall(function()
+                    vim.cmd(
+                        "tabclose "
+                            .. vim.api.nvim_tabpage_get_number(widget_tab)
+                    )
+                end)
+            end
+        end)
+
+        it("picks the first readable oldfile under the Session CWD", function()
+            local project_dir = vim.fn.tempname()
+            vim.fn.mkdir(project_dir, "p")
+            local project_file = project_dir .. "/recent.lua"
+            vim.fn.writefile({ "" }, project_file)
+            local neovim_cwd_file = vim.fn.fnamemodify("README.md", ":p")
+
+            widget.cwd = project_dir
+            vim.v.oldfiles = { neovim_cwd_file, project_file }
+            widget:show({ focus_prompt = false })
+
+            local winid = widget:open_editor_window()
+
+            assert.is_not_nil(winid)
+            ---@cast winid integer
+            assert.equal(
+                project_file,
+                vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(winid))
+            )
+        end)
+    end)
+
     describe("hide across tabs", function()
         local widget
         local notify_stub

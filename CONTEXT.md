@@ -66,6 +66,15 @@ held on **ChatHistory**. Derived from the first prompt submit, or seeded by a
 the provider during `session/new` or `session/load`. Labels session-picker
 entries. _Avoid_: bare "title" — say Session title, or **Tool Call** title.
 
+**Session CWD**: The absolute directory a **SessionManager** works in for its
+whole life. Sent to the **Provider** as `cwd` on `session/new` and
+`session/load`, and the anchor for `@` file-picker paths, which the provider
+resolves against it. Fixed at creation: inherited from the source
+**SessionManager** when one starts another, else derived from the file buffer
+the user acted from by the user's configured rule, else the Neovim cwd. _Avoid_:
+bare "cwd" (ambiguous with the Neovim cwd) and "project root" (implies a
+repository).
+
 **SessionRegistry**: The module-level singleton mapping **Session key** ->
 **SessionManager** and the owner of manager registration, placement, and
 replacement. It composes SessionStarter with the inert manager and owns the

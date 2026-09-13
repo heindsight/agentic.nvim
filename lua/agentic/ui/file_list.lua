@@ -13,17 +13,20 @@ end
 --- @field _files string[]
 --- @field _bufnr integer the same buffer number as the ChatWidget's files buffer
 --- @field _on_change fun(fileList: agentic.ui.FileList)
+--- @field _cwd string Session CWD: base of every displayed `@path`
 local FileList = {}
 FileList.__index = FileList
 
 --- @param bufnr integer The files buffer number from ChatWidget
 --- @param on_change fun(fileList: agentic.ui.FileList) Callback to trigger when file list changes (e.g., update header)
+--- @param cwd string Session CWD
 --- @return agentic.ui.FileList
-function FileList:new(bufnr, on_change)
+function FileList:new(bufnr, on_change, cwd)
     local instance = setmetatable({
         _files = {},
         _bufnr = bufnr,
         _on_change = on_change,
+        _cwd = cwd,
     }, self)
 
     instance:_setup_keybindings()
@@ -83,7 +86,8 @@ function FileList:to_prompt()
     for _, file_path in ipairs(files) do
         prompt[#prompt + 1] = ACPPayloads.create_file_content(file_path)
 
-        local smart_path = FileSystem.to_smart_path(file_path)
+        -- Relative to the Session CWD: the provider resolves `@path` against it.
+        local smart_path = FileSystem.to_smart_path_from(file_path, self._cwd)
         local ext = FileSystem.get_file_extension(file_path)
         local line
         -- Image files render as markdown image tags so the chat
@@ -118,7 +122,8 @@ function FileList:_render()
     local lines = {}
 
     for _, file in ipairs(self._files) do
-        lines[#lines + 1] = "-   " .. FileSystem.to_smart_path(file)
+        lines[#lines + 1] = "-   "
+            .. FileSystem.to_smart_path_from(file, self._cwd)
     end
 
     BufHelpers.with_modifiable(self._bufnr, function(bufnr)
