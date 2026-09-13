@@ -882,9 +882,10 @@ System information ~
                                              *agentic-system-context*
 The first message of each session automatically includes platform
 info, shell/Neovim version, date, git status, and project root. Git
-status and project root describe the session working directory
-(|agentic-session-cwd|). This reduces time to first response by
-providing immediate context.
+status is read from the session working directory
+(|agentic-session-cwd|); the project root is its repository root when
+inside one. This reduces time to first response by providing immediate
+context.
 
 Event hooks ~
                                                      *agentic-hooks*

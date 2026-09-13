@@ -25,8 +25,9 @@ describe("agentic.utils.EnvironmentInfo", function()
         local info = EnvironmentInfo.get_system_info(project_dir)
 
         assert.is_not_nil(info:find("- This is a Git repository.", 1, true))
-        -- The Session CWD itself, not the repository root above it.
-        assert.is_not_nil(info:find("- Project root: " .. project_dir, 1, true))
+        -- The repository root found from the Session CWD, as upstream reports.
+        assert.is_not_nil(info:find("- Project root: " .. repo_dir, 1, true))
+        assert.is_nil(info:find("- Project root: " .. project_dir, 1, true))
         assert.is_not_nil(info:find("- Changed files:", 1, true))
         assert.is_nil(info:find(vim.fn.getcwd(), 1, true))
     end)

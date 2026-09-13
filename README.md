@@ -1058,7 +1058,8 @@ message of each session:
   - Current branch
   - Changed files
   - Recent commits (last 3)
-- Project root path (the session's working directory)
+- Project root path (the git repository root found from the session's working
+  directory, else that directory itself)
 
 This helps the AI Agent understand the context of the current project without
 having to run additional commands or grep through files, the goals is to reduce
