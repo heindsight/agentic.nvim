@@ -12,8 +12,11 @@ describe("agentic.ui.FileList", function()
     local on_change_spy
     --- @type TestStub
     local fs_stat_stub
+    --- @type integer[]
+    local extra_buffers
 
     before_each(function()
+        extra_buffers = {}
         bufnr = vim.api.nvim_create_buf(false, true)
         on_change_spy = spy.new(function() end)
 
@@ -32,6 +35,11 @@ describe("agentic.ui.FileList", function()
 
         if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
             vim.api.nvim_buf_delete(bufnr, { force = true })
+        end
+        for _, extra in ipairs(extra_buffers) do
+            if vim.api.nvim_buf_is_valid(extra) then
+                vim.api.nvim_buf_delete(extra, { force = true })
+            end
         end
     end)
 
@@ -259,6 +267,7 @@ describe("agentic.ui.FileList", function()
 
         it("writes @-mentions relative to the Session CWD", function()
             local other_bufnr = vim.api.nvim_create_buf(false, true)
+            extra_buffers[#extra_buffers + 1] = other_bufnr
             local project_list = FileList:new(
                 other_bufnr,
                 on_change_spy --[[@as function]],
@@ -274,7 +283,6 @@ describe("agentic.ui.FileList", function()
             assert.is_not_nil(text:find("  - @code.lua", 1, true))
             assert.is_not_nil(text:find("  - @sub/deep.lua", 1, true))
             assert.is_not_nil(text:find("  - @/var/outside.lua", 1, true))
-            vim.api.nvim_buf_delete(other_bufnr, { force = true })
         end)
 
         it("returns one prompt entry per file and clears the list", function()

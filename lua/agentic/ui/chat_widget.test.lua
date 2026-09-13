@@ -1521,8 +1521,11 @@ describe("agentic.ui.ChatWidget", function()
         local widget
         local original_oldfiles
         local widget_tab
+        --- @type string|nil
+        local project_file
 
         before_each(function()
+            project_file = nil
             original_oldfiles = vim.v.oldfiles
             vim.cmd("tabnew")
             widget_tab = vim.api.nvim_get_current_tabpage()
@@ -1535,6 +1538,10 @@ describe("agentic.ui.ChatWidget", function()
                 widget:destroy()
             end)
             widget = nil
+            local file_bufnr = project_file and vim.fn.bufnr(project_file) or -1
+            if file_bufnr ~= -1 then
+                vim.api.nvim_buf_delete(file_bufnr, { force = true })
+            end
             if vim.api.nvim_tabpage_is_valid(widget_tab) then
                 pcall(function()
                     vim.cmd(
@@ -1548,7 +1555,7 @@ describe("agentic.ui.ChatWidget", function()
         it("picks the first readable oldfile under the Session CWD", function()
             local project_dir = vim.fn.tempname()
             vim.fn.mkdir(project_dir, "p")
-            local project_file = project_dir .. "/recent.lua"
+            project_file = project_dir .. "/recent.lua"
             vim.fn.writefile({ "" }, project_file)
             local neovim_cwd_file = vim.fn.fnamemodify("README.md", ":p")
 

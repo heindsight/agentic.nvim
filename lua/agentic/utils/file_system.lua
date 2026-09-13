@@ -156,6 +156,15 @@ function FileSystem.read_file_base64(path)
     return vim.base64.encode(content)
 end
 
+--- Absolute on POSIX (`/x`), Windows drive (`C:\x`) or UNC (`\\host\x`).
+--- @param path string
+--- @return boolean absolute
+function FileSystem.is_absolute_path(path)
+    return vim.startswith(path, "/")
+        or path:match("^%a:[/\\]") ~= nil
+        or vim.startswith(path, "\\\\")
+end
+
 --- @param path string
 function FileSystem.to_relative_path(path)
     return vim.fn.fnamemodify(path, ":.")
@@ -187,7 +196,7 @@ end
 --- link and through its target dedupe to one `@path`, as `:p:~:.` did.
 --- @param path string
 --- @param base string Absolute directory
---- @return string
+--- @return string smart_path
 function FileSystem.to_smart_path_from(path, base)
     local absolute = vim.fn.fnamemodify(path, ":p")
     local trailing = absolute:match("[/\\]$") and "/" or ""

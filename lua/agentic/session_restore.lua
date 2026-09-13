@@ -29,7 +29,7 @@ local function resolve_context(opts)
             agent = source.agent,
             provider_name = source.provider_name,
             source = source,
-            cwd = SessionCwd.resolve(override or source.cwd, acting_bufnr),
+            cwd = SessionCwd.resolve(override, source.cwd, acting_bufnr),
         }
     end
 
@@ -41,7 +41,7 @@ local function resolve_context(opts)
     return {
         agent = agent,
         provider_name = Config.provider,
-        cwd = SessionCwd.resolve(override, acting_bufnr),
+        cwd = SessionCwd.resolve(override, nil, acting_bufnr),
     }
 end
 

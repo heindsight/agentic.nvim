@@ -1046,13 +1046,35 @@ describe("agentic: switch_provider", function()
 
     describe("session cwd", function()
         local original_session_cwd
+        local original_bufnr
+        --- @type integer[]
+        local file_buffers
+
+        --- A listed, unloaded buffer for a file that need not exist.
+        --- @param path string
+        --- @return integer bufnr
+        local function file_buffer(path)
+            local bufnr = vim.fn.bufadd(path)
+            file_buffers[#file_buffers + 1] = bufnr
+            return bufnr
+        end
 
         before_each(function()
             original_session_cwd = Config.settings.session_cwd
+            original_bufnr = vim.api.nvim_get_current_buf()
+            file_buffers = {}
         end)
 
         after_each(function()
             Config.settings.session_cwd = original_session_cwd
+            if vim.api.nvim_buf_is_valid(original_bufnr) then
+                vim.api.nvim_set_current_buf(original_bufnr)
+            end
+            for _, bufnr in ipairs(file_buffers) do
+                if vim.api.nvim_buf_is_valid(bufnr) then
+                    vim.api.nvim_buf_delete(bufnr, { force = true })
+                end
+            end
         end)
 
         it("sends the Neovim cwd on session/new without a cwd rule", function()
@@ -1065,13 +1087,28 @@ describe("agentic: switch_provider", function()
             assert.same({ vim.fn.getcwd() }, create_session_cwds)
         end)
 
+        it("honours a window-local :lcd in the fallback", function()
+            local Agentic = require("agentic")
+            Config.settings.session_cwd = nil
+            local local_dir = vim.fn.tempname()
+            vim.fn.mkdir(local_dir, "p")
+            -- A fresh tab: `after_each` closes it, taking the `:lcd` with it.
+            vim.cmd("tabnew")
+            vim.cmd("lcd " .. vim.fn.fnameescape(local_dir))
+
+            Agentic.open({ auto_add_to_context = false })
+            flush_schedule()
+
+            assert.same({ local_dir }, create_session_cwds)
+        end)
+
         it(
             "sends the directory the cwd rule derives from the buffer",
             function()
                 local Agentic = require("agentic")
                 local project_dir = vim.fn.tempname()
                 vim.fn.mkdir(project_dir, "p")
-                local file_bufnr = vim.fn.bufadd(project_dir .. "/main.lua")
+                local file_bufnr = file_buffer(project_dir .. "/main.lua")
                 vim.api.nvim_set_current_buf(file_bufnr)
                 local seen_bufnr
                 Config.settings.session_cwd = function(ctx)
@@ -1210,6 +1247,46 @@ describe("agentic: switch_provider", function()
         )
 
         it(
+            "falls back to the inherited Session CWD on a bad override",
+            function()
+                local Agentic = require("agentic")
+                local session, project_dir = create_session_in_temp_dir()
+                keep_source_on_select()
+                vim.api.nvim_set_current_buf(session.widget.buf_nrs.input)
+                Config.settings.session_cwd = function()
+                    return vim.fn.tempname()
+                end
+
+                Agentic.new_session({
+                    auto_add_to_context = false,
+                    cwd = "relative/dir",
+                })
+                flush_schedule()
+
+                assert.same({ project_dir, project_dir }, create_session_cwds)
+                assert.spy(logger_notify_stub).was.called(1)
+            end
+        )
+
+        it(
+            "derives the Session CWD on provider switch with no session",
+            function()
+                local Agentic = require("agentic")
+                local other_dir = vim.fn.tempname()
+                vim.fn.mkdir(other_dir, "p")
+                vim.api.nvim_set_current_buf(file_buffer(other_dir .. "/x.lua"))
+                Config.settings.session_cwd = function(ctx)
+                    return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
+                end
+
+                Agentic.switch_provider({ provider = "gemini-acp" })
+                flush_schedule()
+
+                assert.same({ other_dir }, create_session_cwds)
+            end
+        )
+
+        it(
             "derives the Session CWD when new_session runs in a file buffer",
             function()
                 local Agentic = require("agentic")
@@ -1217,9 +1294,7 @@ describe("agentic: switch_provider", function()
                 keep_source_on_select()
                 local other_dir = vim.fn.tempname()
                 vim.fn.mkdir(other_dir, "p")
-                vim.api.nvim_set_current_buf(
-                    vim.fn.bufadd(other_dir .. "/x.lua")
-                )
+                vim.api.nvim_set_current_buf(file_buffer(other_dir .. "/x.lua"))
                 Config.settings.session_cwd = function(ctx)
                     return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
                 end
@@ -1261,9 +1336,7 @@ describe("agentic: switch_provider", function()
                 local _session, project_dir = create_session_in_temp_dir()
                 local other_dir = vim.fn.tempname()
                 vim.fn.mkdir(other_dir, "p")
-                vim.api.nvim_set_current_buf(
-                    vim.fn.bufadd(other_dir .. "/x.lua")
-                )
+                vim.api.nvim_set_current_buf(file_buffer(other_dir .. "/x.lua"))
                 Config.settings.session_cwd = function()
                     return other_dir
                 end
@@ -1298,9 +1371,7 @@ describe("agentic: switch_provider", function()
                 keep_source_on_select()
                 local other_dir = vim.fn.tempname()
                 vim.fn.mkdir(other_dir, "p")
-                vim.api.nvim_set_current_buf(
-                    vim.fn.bufadd(other_dir .. "/x.lua")
-                )
+                vim.api.nvim_set_current_buf(file_buffer(other_dir .. "/x.lua"))
                 Config.settings.session_cwd = function(ctx)
                     return vim.fs.dirname(vim.api.nvim_buf_get_name(ctx.bufnr))
                 end
@@ -1317,6 +1388,9 @@ describe("agentic: switch_provider", function()
             local Agentic = require("agentic")
             create_session_in_temp_dir()
             keep_source_on_select()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
             local forced_dir = vim.fn.tempname()
             vim.fn.mkdir(forced_dir, "p")
 
@@ -1345,6 +1419,9 @@ describe("agentic: switch_provider", function()
             local Agentic = require("agentic")
             create_session_in_temp_dir()
             keep_source_on_select()
+            Config.settings.session_cwd = function()
+                return vim.fn.tempname()
+            end
             local forced_dir = vim.fn.tempname()
             vim.fn.mkdir(forced_dir, "p")
 

@@ -21,7 +21,7 @@ local function run_git(cmd, cwd)
 end
 
 --- @param cwd string Session CWD, reported as the project root
---- @return string
+--- @return string info
 function M.get_system_info(cwd)
     local os_name = vim.uv.os_uname().sysname
     local os_version = vim.uv.os_uname().release
@@ -44,13 +44,9 @@ function M.get_system_info(cwd)
         today
     )
 
-    local project_root = cwd
-
     -- Git commands run in the Session CWD: `vim.fn.system` would inherit
     -- Neovim's process cwd and describe the wrong repository.
-    local git_root = vim.fs.root(cwd, ".git")
-    if git_root then
-        project_root = git_root
+    if vim.fs.root(cwd, ".git") then
         res = res .. "\n- This is a Git repository."
 
         local branch =
@@ -84,7 +80,8 @@ function M.get_system_info(cwd)
         end
     end
 
-    res = res .. string.format("\n- Project root: %s", project_root)
+    -- The Session CWD itself, even inside a repository subdirectory.
+    res = res .. string.format("\n- Project root: %s", cwd)
 
     res = "<environment_info>\n" .. res .. "\n</environment_info>"
     return res

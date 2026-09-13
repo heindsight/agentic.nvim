@@ -14,18 +14,20 @@ describe("agentic.utils.EnvironmentInfo", function()
     end)
 
     it("reads git state from the Session CWD, not the Neovim cwd", function()
-        local project_dir = vim.fn.tempname()
+        local repo_dir = vim.fn.tempname()
+        local project_dir = repo_dir .. "/packages/app"
         vim.fn.mkdir(project_dir, "p")
         vim.system({ "git", "init", "-q", "-b", "session-cwd-branch" }, {
-            cwd = project_dir,
+            cwd = repo_dir,
         }):wait()
         vim.fn.writefile({ "" }, project_dir .. "/untracked.lua")
 
         local info = EnvironmentInfo.get_system_info(project_dir)
 
         assert.is_not_nil(info:find("- This is a Git repository.", 1, true))
+        -- The Session CWD itself, not the repository root above it.
         assert.is_not_nil(info:find("- Project root: " .. project_dir, 1, true))
-        assert.is_not_nil(info:find("?? untracked.lua", 1, true))
+        assert.is_not_nil(info:find("- Changed files:", 1, true))
         assert.is_nil(info:find(vim.fn.getcwd(), 1, true))
     end)
 end)

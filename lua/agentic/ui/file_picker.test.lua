@@ -45,21 +45,34 @@ describe("FilePicker:scan_files", function()
 
     --- @type agentic.ui.FilePicker
     local picker
+    --- @type integer[]
+    local buffers
+
+    --- @param cwd string Session CWD
+    --- @return agentic.ui.FilePicker picker
+    local function new_picker(cwd)
+        local bufnr = vim.api.nvim_create_buf(false, true)
+        buffers[#buffers + 1] = bufnr
+        return FilePicker:new(bufnr, cwd) --[[@as agentic.ui.FilePicker]]
+    end
 
     before_each(function()
+        buffers = {}
         original_cmd_rg = FilePicker.CMD_RG[1]
         original_cmd_fd = FilePicker.CMD_FD[1]
         original_cmd_git = FilePicker.CMD_GIT[1]
-        picker = FilePicker:new(
-            vim.api.nvim_create_buf(false, true),
-            vim.fn.getcwd()
-        ) --[[@as agentic.ui.FilePicker]]
+        picker = new_picker(vim.fn.getcwd())
     end)
 
     after_each(function()
         if system_stub then
             system_stub:revert()
             system_stub = nil
+        end
+        for _, bufnr in ipairs(buffers) do
+            if vim.api.nvim_buf_is_valid(bufnr) then
+                vim.api.nvim_buf_delete(bufnr, { force = true })
+            end
         end
         FilePicker.CMD_RG[1] = original_cmd_rg
         FilePicker.CMD_FD[1] = original_cmd_fd
@@ -99,8 +112,7 @@ describe("FilePicker:scan_files", function()
             FilePicker.CMD_RG[1] = "echo"
             FilePicker.CMD_FD[1] = "echo"
             FilePicker.CMD_GIT[1] = "nonexistent_git"
-            local project_picker =
-                FilePicker:new(vim.api.nvim_create_buf(false, true), "/tmp") --[[@as agentic.ui.FilePicker]]
+            local project_picker = new_picker("/tmp")
 
             system_stub = spy.stub(vim, "system")
             system_stub:invokes(function(_cmd, _opts)
@@ -202,10 +214,7 @@ describe("FilePicker:scan_files", function()
             FilePicker.CMD_RG[1] = original_cmd_rg
             FilePicker.CMD_FD[1] = "nonexistent_fd"
             FilePicker.CMD_GIT[1] = "nonexistent_git"
-            local project_picker = FilePicker:new(
-                vim.api.nvim_create_buf(false, true),
-                project_dir
-            ) --[[@as agentic.ui.FilePicker]]
+            local project_picker = new_picker(project_dir)
 
             local words = vim.tbl_map(function(f)
                 return f.word
@@ -219,10 +228,7 @@ describe("FilePicker:scan_files", function()
             FilePicker.CMD_RG[1] = "nonexistent_rg"
             FilePicker.CMD_FD[1] = "nonexistent_fd"
             FilePicker.CMD_GIT[1] = "nonexistent_git"
-            local project_picker = FilePicker:new(
-                vim.api.nvim_create_buf(false, true),
-                project_dir
-            ) --[[@as agentic.ui.FilePicker]]
+            local project_picker = new_picker(project_dir)
 
             local words = vim.tbl_map(function(f)
                 return f.word

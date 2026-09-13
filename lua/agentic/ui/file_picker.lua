@@ -130,10 +130,10 @@ function FilePicker:_setup_completion(bufnr)
 end
 
 --- @param path string Relative to the Session CWD, or absolute
---- @return string
+--- @return string session_path
 function FilePicker:_to_session_path(path)
     local absolute = path
-    if not vim.startswith(path, "/") and not path:match("^%a:[/\\]") then
+    if not FileSystem.is_absolute_path(path) then
         absolute = vim.fs.joinpath(self._cwd, path)
     end
 

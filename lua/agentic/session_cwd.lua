@@ -1,22 +1,15 @@
 local Config = require("agentic.config")
 local Logger = require("agentic.utils.logger")
+local FileSystem = require("agentic.utils.file_system")
 
 --- Resolves the Session CWD (see `CONTEXT.md`) for one session creation.
 --- The only module allowed to read `vim.fn.getcwd()` (ADR 0009).
 --- @class agentic.SessionCwd
 local SessionCwd = {}
 
---- @param path string
---- @return boolean
-local function is_absolute(path)
-    return vim.startswith(path, "/")
-        or path:match("^%a:[/\\]") ~= nil
-        or vim.startswith(path, "\\\\")
-end
-
 --- `:p` appends a slash to a directory; strip it, keeping a bare root.
 --- @param path string
---- @return string
+--- @return string normalised
 local function normalise(path)
     local absolute = vim.fn.fnamemodify(path, ":p")
     local stripped = absolute:gsub("([^/\\])[/\\]+$", "%1")
@@ -39,7 +32,7 @@ local function validate(candidate, origin)
         return nil
     end
 
-    if not is_absolute(candidate) then
+    if not FileSystem.is_absolute_path(candidate) then
         Logger.notify(
             string.format(
                 "Ignoring %s: '%s' is not an absolute path",
@@ -67,21 +60,30 @@ local function validate(candidate, origin)
     return cwd
 end
 
---- Priority: `candidate` (an explicit override or an inherited Session CWD),
---- then `Config.settings.session_cwd` on the acting buffer, then the Neovim cwd.
---- Never fails: a rejected value notifies and falls through.
---- @param candidate string|nil
+--- Priority: the explicit `override`, then the `inherited` Session CWD of a
+--- source session, then `Config.settings.session_cwd` on the acting buffer,
+--- then the Neovim cwd. Never fails: a rejected value notifies and falls
+--- through to the next candidate.
+--- @param override string|nil `opts.cwd` from a public entry point
+--- @param inherited string|nil Session CWD of the session being replaced
 --- @param bufnr integer The buffer current when the entry point ran
 --- @return string cwd
-function SessionCwd.resolve(candidate, bufnr)
-    if candidate ~= nil then
-        local cwd = validate(candidate, "session cwd")
+function SessionCwd.resolve(override, inherited, bufnr)
+    if override ~= nil then
+        local cwd = validate(override, "cwd override")
         if cwd then
             return cwd
         end
     end
 
-    local rule = Config.settings and Config.settings.session_cwd
+    if inherited ~= nil then
+        local cwd = validate(inherited, "inherited session cwd")
+        if cwd then
+            return cwd
+        end
+    end
+
+    local rule = Config.settings.session_cwd
     if type(rule) == "function" then
         --- @type agentic.UserConfig.SessionCwdContext
         local ctx = { bufnr = bufnr }

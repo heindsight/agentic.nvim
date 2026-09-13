@@ -66,7 +66,8 @@ function SessionRegistry.create(provider_name, start_spec, agent)
 
     local spec = start_spec or { kind = "new" }
     -- Every creation path funnels through here: one resolver, one fallback.
-    spec.cwd = SessionCwd.resolve(spec.cwd, vim.api.nvim_get_current_buf())
+    -- A caller-resolved `spec.cwd` passes straight through validation.
+    spec.cwd = SessionCwd.resolve(spec.cwd, nil, vim.api.nvim_get_current_buf())
 
     local ok, session = pcall(function()
         return SessionManager:new(
@@ -460,15 +461,13 @@ function SessionRegistry.create_with_current_session_guard(
     -- Resolved BEFORE the lifecycle picker: the acting buffer is the one the
     -- keybinding ran in, not whatever is current once `vim.ui.select` returns.
     local acting_bufnr = vim.api.nvim_get_current_buf()
-    if cwd == nil then
-        local WidgetRegistry = require("agentic.ui.widget_registry")
-        local widget = WidgetRegistry.get(acting_bufnr)
-        local owner = widget
-            and widget.session_key
-            and SessionRegistry.get(widget.session_key)
-        cwd = owner and owner.cwd or nil
-    end
-    local session_cwd = SessionCwd.resolve(cwd, acting_bufnr)
+    local WidgetRegistry = require("agentic.ui.widget_registry")
+    local widget = WidgetRegistry.get(acting_bufnr)
+    local owner = widget
+        and widget.session_key
+        and SessionRegistry.get(widget.session_key)
+    local session_cwd =
+        SessionCwd.resolve(cwd, owner and owner.cwd or nil, acting_bufnr)
 
     --- @param destroy_current boolean
     local function create(destroy_current)
